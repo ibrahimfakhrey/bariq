@@ -24,7 +24,7 @@ class AuditLog(db.Model):
 
     old_values = db.Column(db.JSON, nullable=True)
     new_values = db.Column(db.JSON, nullable=True)
-    metadata = db.Column(db.JSON, default={}, nullable=True)
+    extra_data = db.Column(db.JSON, default={}, nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 

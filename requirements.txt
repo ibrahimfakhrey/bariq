@@ -7,8 +7,8 @@ Flask-CORS==4.0.0
 Flask-Limiter==3.5.0
 
 # Database
-psycopg2-binary==2.9.9
-SQLAlchemy==2.0.23
+SQLAlchemy>=2.0.23
+# psycopg2-binary==2.9.9  # For PostgreSQL in production
 
 # Validation & Serialization
 marshmallow==3.20.1

@@ -19,7 +19,7 @@ class TransactionService:
     # ==================== Create Transaction ====================
 
     @staticmethod
-    def create_transaction(merchant_id, branch_id, cashier_id, customer_national_id, items, discount=0, notes=None):
+    def create_transaction(merchant_id, branch_id, cashier_id, customer_bariq_id, items, discount=0, notes=None, payment_term_days=None):
         """Create a new transaction (initiated by merchant/cashier)"""
         # Validate merchant
         merchant = Merchant.query.get(merchant_id)
@@ -53,8 +53,8 @@ class TransactionService:
                 'error_code': 'MERCH_005'
             }
 
-        # Find customer by national ID
-        customer = Customer.query.filter_by(national_id=customer_national_id).first()
+        # Find customer by Bariq ID
+        customer = Customer.query.filter_by(bariq_id=customer_bariq_id).first()
         if not customer:
             return {
                 'success': False,
@@ -77,7 +77,11 @@ class TransactionService:
                 'error_code': 'VAL_001'
             }
 
-        subtotal = sum(float(item.get('price', 0)) * int(item.get('quantity', 1)) for item in items)
+        # Support both 'price' and 'unit_price' field names
+        subtotal = sum(
+            float(item.get('unit_price') or item.get('price') or 0) * int(item.get('quantity', 1))
+            for item in items
+        )
         discount = float(discount) if discount else 0
 
         if discount < 0:
@@ -122,8 +126,11 @@ class TransactionService:
                 'error_code': 'VAL_001'
             }
 
-        # Calculate due date (10 days from now)
-        repayment_days = current_app.config.get('REPAYMENT_DAYS', 10)
+        # Calculate due date based on payment terms
+        if payment_term_days:
+            repayment_days = int(payment_term_days)
+        else:
+            repayment_days = current_app.config.get('REPAYMENT_DAYS', 30)
         due_date = (datetime.utcnow() + timedelta(days=repayment_days)).date()
 
         try:

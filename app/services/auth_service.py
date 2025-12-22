@@ -69,6 +69,51 @@ class AuthService:
         }
 
     @staticmethod
+    def customer_login(username, password):
+        """Authenticate customer with username/password"""
+        # Try to find by username
+        customer = Customer.query.filter_by(username=username).first()
+
+        if not customer or not customer.check_password(password):
+            return {
+                'success': False,
+                'message': 'Invalid username or password',
+                'error_code': 'AUTH_001'
+            }
+
+        if customer.status != 'active':
+            return {
+                'success': False,
+                'message': 'Account is not active',
+                'error_code': 'AUTH_003'
+            }
+
+        # Update last login
+        customer.last_login_at = datetime.utcnow()
+        db.session.commit()
+
+        # Generate tokens
+        identity = {
+            'id': customer.id,
+            'type': 'customer',
+            'bariq_id': customer.bariq_id,
+            'national_id': customer.national_id
+        }
+
+        access_token = create_access_token(identity=identity)
+        refresh_token = create_refresh_token(identity=identity)
+
+        return {
+            'success': True,
+            'message': 'Login successful',
+            'data': {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'customer': customer.to_dict()
+            }
+        }
+
+    @staticmethod
     def merchant_login(email, password):
         """Authenticate merchant user"""
         user = MerchantUser.query.filter_by(email=email).first()

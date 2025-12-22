@@ -6,7 +6,7 @@ from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
     jwt_required,
-    get_jwt_identity
+    current_user
 )
 
 auth_bp = Blueprint('auth', __name__)
@@ -56,6 +56,29 @@ def nafath_verify():
     from app.services.auth_service import AuthService
 
     result = AuthService.verify_nafath_and_login(national_id, transaction_id)
+
+    if not result['success']:
+        return jsonify(result), 401
+
+    return jsonify(result)
+
+
+@auth_bp.route('/customer/login', methods=['POST'])
+def customer_login():
+    """Customer login with username/password"""
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({
+            'success': False,
+            'message': 'Username and password are required',
+            'error_code': 'VAL_001'
+        }), 400
+
+    from app.services.auth_service import AuthService
+    result = AuthService.customer_login(username, password)
 
     if not result['success']:
         return jsonify(result), 401
@@ -113,7 +136,7 @@ def admin_login():
 @jwt_required(refresh=True)
 def refresh_token():
     """Refresh access token"""
-    identity = get_jwt_identity()
+    identity = current_user
     access_token = create_access_token(identity=identity)
 
     return jsonify({

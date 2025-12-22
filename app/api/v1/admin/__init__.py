@@ -2,7 +2,7 @@
 Admin Routes
 """
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, current_user
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -64,7 +64,7 @@ def update_customer(customer_id):
     """Update customer"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.update_customer(customer_id, data, identity['id'])
@@ -81,7 +81,7 @@ def update_customer_credit(customer_id):
     """Update customer credit limit"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.update_customer_credit_limit(
@@ -119,7 +119,7 @@ def approve_credit_request(request_id):
     """Approve credit request"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.approve_credit_request(
@@ -141,7 +141,7 @@ def reject_credit_request(request_id):
     """Reject credit request"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.reject_credit_request(
@@ -201,7 +201,7 @@ def update_merchant(merchant_id):
     """Update merchant"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.update_merchant(merchant_id, data, identity['id'])
@@ -218,7 +218,7 @@ def approve_merchant(merchant_id):
     """Approve pending merchant"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.approve_merchant(
@@ -239,7 +239,7 @@ def suspend_merchant(merchant_id):
     """Suspend merchant"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.suspend_merchant(
@@ -333,7 +333,7 @@ def approve_settlement(settlement_id):
     """Approve settlement"""
     from app.services.settlement_service import SettlementService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = SettlementService.approve_settlement(settlement_id, identity['id'])
 
     if not result['success']:
@@ -348,7 +348,7 @@ def transfer_settlement(settlement_id):
     """Mark settlement as transferred"""
     from app.services.settlement_service import SettlementService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = SettlementService.mark_as_transferred(
@@ -382,7 +382,7 @@ def create_staff():
     """Add admin staff"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.create_admin_staff(data, identity['id'])
@@ -399,7 +399,7 @@ def update_staff(staff_id):
     """Update admin staff"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.update_admin_staff(staff_id, data, identity['id'])
@@ -482,7 +482,7 @@ def update_setting(key):
     """Update setting"""
     from app.services.admin_service import AdminService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = AdminService.update_system_setting(key, data.get('value'), identity['id'])

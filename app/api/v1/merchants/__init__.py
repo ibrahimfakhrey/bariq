@@ -2,7 +2,7 @@
 Merchant Routes
 """
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, current_user
 
 merchants_bp = Blueprint('merchants', __name__)
 
@@ -29,7 +29,7 @@ def get_merchant_profile():
     """Get merchant profile"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = MerchantService.get_merchant_profile(identity['merchant_id'])
 
     if not result['success']:
@@ -44,7 +44,7 @@ def update_merchant_profile():
     """Update merchant profile"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.update_merchant_profile(identity['merchant_id'], data)
 
@@ -62,7 +62,7 @@ def get_regions():
     """Get all regions"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = MerchantService.get_regions(identity['merchant_id'])
 
     return jsonify(result)
@@ -74,7 +74,7 @@ def create_region():
     """Create region"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.create_region(identity['merchant_id'], data)
 
@@ -90,7 +90,7 @@ def update_region(region_id):
     """Update region"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.update_region(identity['merchant_id'], region_id, data)
 
@@ -106,7 +106,7 @@ def delete_region(region_id):
     """Delete region"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = MerchantService.delete_region(identity['merchant_id'], region_id)
 
     if not result['success']:
@@ -123,7 +123,7 @@ def get_branches():
     """Get all branches"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     region_id = request.args.get('region_id')
     is_active = request.args.get('is_active')
 
@@ -142,7 +142,7 @@ def create_branch():
     """Create branch"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.create_branch(identity['merchant_id'], data)
 
@@ -158,7 +158,7 @@ def get_branch(branch_id):
     """Get branch details"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = MerchantService.get_branch(identity['merchant_id'], branch_id)
 
     if not result['success']:
@@ -173,7 +173,7 @@ def update_branch(branch_id):
     """Update branch"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.update_branch(identity['merchant_id'], branch_id, data)
 
@@ -191,7 +191,7 @@ def get_staff():
     """Get all staff"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     role = request.args.get('role')
     branch_id = request.args.get('branch_id')
 
@@ -210,7 +210,7 @@ def create_staff():
     """Add staff member"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.create_staff(identity['merchant_id'], data)
 
@@ -226,7 +226,7 @@ def update_staff(staff_id):
     """Update staff"""
     from app.services.merchant_service import MerchantService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
     result = MerchantService.update_staff(identity['merchant_id'], staff_id, data)
 
@@ -234,6 +234,38 @@ def update_staff(staff_id):
         return jsonify(result), 400
 
     return jsonify(result)
+
+
+# ==================== Customer Lookup (by Bariq ID) ====================
+
+@merchants_bp.route('/customers/lookup/<bariq_id>', methods=['GET'])
+@jwt_required()
+def lookup_customer(bariq_id):
+    """Look up customer by Bariq ID for transaction"""
+    from app.models.customer import Customer
+
+    customer = Customer.query.filter_by(bariq_id=bariq_id).first()
+
+    if not customer:
+        return jsonify({
+            'success': False,
+            'message': 'Customer not found',
+            'error_code': 'CUST_001'
+        }), 404
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'id': customer.id,
+            'bariq_id': customer.bariq_id,
+            'full_name_ar': customer.full_name_ar,
+            'full_name_en': customer.full_name_en,
+            'status': customer.status,
+            'credit_limit': customer.credit_limit,
+            'available_credit': customer.available_credit,
+            'used_credit': customer.credit_limit - customer.available_credit if customer.credit_limit else 0
+        }
+    })
 
 
 # ==================== Transactions ====================
@@ -244,17 +276,21 @@ def create_transaction():
     """Create new transaction/invoice"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
+
+    # Support both customer_bariq_id (new) and customer_national_id (legacy)
+    customer_bariq_id = data.get('customer_bariq_id')
 
     result = TransactionService.create_transaction(
         merchant_id=identity['merchant_id'],
         branch_id=data.get('branch_id') or identity.get('branch_id'),
         cashier_id=identity['id'],
-        customer_national_id=data.get('customer_national_id'),
+        customer_bariq_id=customer_bariq_id,
         items=data.get('items', []),
         discount=data.get('discount', 0),
-        notes=data.get('notes')
+        notes=data.get('notes'),
+        payment_term_days=data.get('payment_term_days')
     )
 
     if not result['success']:
@@ -269,7 +305,7 @@ def get_transactions():
     """Get transactions"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     branch_id = request.args.get('branch_id')
     status = request.args.get('status')
@@ -297,7 +333,7 @@ def get_transaction(transaction_id):
     """Get transaction details"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = TransactionService.get_transaction_for_merchant(
         identity['merchant_id'],
         transaction_id
@@ -315,7 +351,7 @@ def cancel_transaction(transaction_id):
     """Cancel pending transaction"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = TransactionService.cancel_transaction(
@@ -338,7 +374,7 @@ def create_return(transaction_id):
     """Process return"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = TransactionService.process_return(
@@ -363,7 +399,7 @@ def get_returns():
     """Get all returns"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     branch_id = request.args.get('branch_id')
     from_date = request.args.get('from_date')
@@ -387,7 +423,7 @@ def get_reports_summary():
     """Get summary dashboard"""
     from app.services.report_service import ReportService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     from_date = request.args.get('from_date')
     to_date = request.args.get('to_date')
@@ -409,7 +445,7 @@ def get_reports_transactions():
     """Detailed transaction report"""
     from app.services.report_service import ReportService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     from_date = request.args.get('from_date')
     to_date = request.args.get('to_date')
@@ -435,7 +471,7 @@ def get_settlements():
     """Get settlements"""
     from app.services.settlement_service import SettlementService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     status = request.args.get('status')
     branch_id = request.args.get('branch_id')
@@ -457,7 +493,7 @@ def get_settlement(settlement_id):
     """Get settlement details"""
     from app.services.settlement_service import SettlementService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = SettlementService.get_settlement_details(
         identity['merchant_id'],
         settlement_id

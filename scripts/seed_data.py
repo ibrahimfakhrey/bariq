@@ -99,16 +99,31 @@ def seed_sample_customer():
     """Create a sample customer for testing"""
     print("Seeding sample customer...")
 
-    if Customer.query.filter_by(national_id='1234567890').first():
-        print("  Sample customer already exists, skipping...")
+    existing = Customer.query.filter_by(national_id='1234567890').first()
+    if existing:
+        # Update existing customer with new fields
+        existing.bariq_id = '123456'
+        existing.username = 'ahmed_ali'
+        existing.set_password('Customer@123')
+        existing.credit_limit = 2500
+        existing.available_credit = 2500
+        existing.used_credit = 0
+        existing.status = 'active'
+        existing.verified_at = datetime.utcnow()
+        db.session.commit()
+        print("  Updated sample customer: 1234567890")
+        print("    Bariq ID: 123456")
+        print("    Username: ahmed_ali / Customer@123")
         return
 
     customer = Customer(
         national_id='1234567890',
         nafath_id='NAFATH123456',
+        bariq_id='123456',  # Unique Bariq ID for merchant lookup
+        username='ahmed_ali',  # Username for login
         full_name_ar='أحمد محمد العلي',
         full_name_en='Ahmed Mohammed Al-Ali',
-        email='customer@test.com',
+        email='ahmed@test.com',
         phone='0551234567',
         date_of_birth=datetime(1990, 5, 15).date(),
         gender='male',
@@ -116,17 +131,22 @@ def seed_sample_customer():
         district='Al Olaya',
         address_line='Building 123, Street 456',
         status='active',
-        credit_limit=1000,
-        available_credit=1000,
+        credit_limit=2500,  # 2500 SAR credit limit
+        available_credit=2500,
         used_credit=0,
         language='ar',
         notifications_enabled=True,
         verified_at=datetime.utcnow()
     )
+    customer.set_password('Customer@123')
 
     db.session.add(customer)
     db.session.commit()
-    print("  Created sample customer: 1234567890")
+    print("  Created sample customer:")
+    print("    National ID: 1234567890")
+    print("    Bariq ID: 123456")
+    print("    Username: ahmed_ali / Customer@123")
+    print("    Credit: 2,500 SAR")
 
 
 def seed_sample_merchant():

@@ -2,7 +2,7 @@
 Customer Routes
 """
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, current_user
 
 customers_bp = Blueprint('customers', __name__)
 
@@ -15,7 +15,7 @@ def get_profile():
     """Get current customer profile"""
     from app.services.customer_service import CustomerService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = CustomerService.get_customer_profile(identity['id'])
 
     if not result['success']:
@@ -30,7 +30,7 @@ def update_profile():
     """Update customer profile"""
     from app.services.customer_service import CustomerService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = CustomerService.update_customer_profile(identity['id'], data)
@@ -49,7 +49,7 @@ def get_credit():
     """Get customer credit details"""
     from app.services.customer_service import CustomerService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = CustomerService.get_credit_details(identity['id'])
 
     return jsonify(result)
@@ -61,7 +61,7 @@ def request_credit_increase():
     """Request credit limit increase"""
     from app.services.customer_service import CustomerService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = CustomerService.request_credit_increase(
@@ -84,7 +84,7 @@ def get_transactions():
     """Get customer transactions"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
 
     # Get query params
     status = request.args.get('status')
@@ -107,7 +107,7 @@ def get_transaction(transaction_id):
     """Get single transaction details"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = TransactionService.get_transaction_for_customer(
         identity['id'],
         transaction_id
@@ -125,7 +125,7 @@ def confirm_transaction(transaction_id):
     """Confirm a pending transaction"""
     from app.services.transaction_service import TransactionService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = TransactionService.confirm_transaction(
         identity['id'],
         transaction_id
@@ -145,7 +145,7 @@ def get_debt():
     """Get current debt summary"""
     from app.services.payment_service import PaymentService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = PaymentService.get_customer_debt(identity['id'])
 
     return jsonify(result)
@@ -157,7 +157,7 @@ def get_payments():
     """Get payment history"""
     from app.services.payment_service import PaymentService
 
-    identity = get_jwt_identity()
+    identity = current_user
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
 
@@ -176,7 +176,7 @@ def make_payment():
     """Make a payment"""
     from app.services.payment_service import PaymentService
 
-    identity = get_jwt_identity()
+    identity = current_user
     data = request.get_json()
 
     result = PaymentService.make_payment(
@@ -237,7 +237,7 @@ def get_notifications():
     """Get notifications"""
     from app.services.notification_service import NotificationService
 
-    identity = get_jwt_identity()
+    identity = current_user
     unread_only = request.args.get('unread_only', 'false').lower() == 'true'
     page = request.args.get('page', 1, type=int)
 
@@ -256,7 +256,7 @@ def mark_notification_read(notification_id):
     """Mark notification as read"""
     from app.services.notification_service import NotificationService
 
-    identity = get_jwt_identity()
+    identity = current_user
     result = NotificationService.mark_as_read(identity['id'], notification_id)
 
     return jsonify(result)

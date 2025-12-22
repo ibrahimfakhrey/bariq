@@ -3,7 +3,9 @@ Customer Model
 """
 from app.extensions import db
 from app.models.mixins import TimestampMixin
+from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
+import random
 
 
 class Customer(db.Model, TimestampMixin):
@@ -13,9 +15,31 @@ class Customer(db.Model, TimestampMixin):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Nafath Data
+    # Bariq ID - Unique customer identifier for merchants
+    bariq_id = db.Column(db.String(10), unique=True, nullable=True, index=True)
+
+    # Login credentials (after Nafath registration)
+    username = db.Column(db.String(50), unique=True, nullable=True, index=True)
+    password_hash = db.Column(db.String(256), nullable=True)
+
+    # Nafath Data (for initial registration only)
     national_id = db.Column(db.String(10), unique=True, nullable=False, index=True)
     nafath_id = db.Column(db.String(100), unique=True, nullable=True)
+
+    def set_password(self, password):
+        """Set password hash"""
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        """Verify password"""
+        if not self.password_hash:
+            return False
+        return check_password_hash(self.password_hash, password)
+
+    @staticmethod
+    def generate_bariq_id():
+        """Generate unique Bariq ID (6 digits)"""
+        return str(random.randint(100000, 999999))
 
     # Personal Info
     full_name_ar = db.Column(db.String(200), nullable=False)
@@ -62,6 +86,8 @@ class Customer(db.Model, TimestampMixin):
         """Convert to dictionary"""
         data = {
             'id': self.id,
+            'bariq_id': self.bariq_id,
+            'username': self.username,
             'full_name_ar': self.full_name_ar,
             'full_name_en': self.full_name_en,
             'phone': self.phone,

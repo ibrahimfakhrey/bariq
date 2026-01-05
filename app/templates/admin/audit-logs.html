@@ -1,0 +1,221 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}سجل العمليات{% endblock %}
+
+{% block page_content %}
+<div id="audit-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<style>
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+.log-details { background: var(--gray-50); padding: 0.75rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.75rem; max-height: 100px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentLogs = [];
+    let currentPage = 1;
+    let currentFilters = {};
+
+    async function loadAuditLogs(page = 1, filters = {}) {
+        const container = document.getElementById('audit-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 50, ...filters };
+            const result = await API.admin.getAuditLogs(params);
+
+            if (!result.success) {
+                showError(container, 'حدث خطأ في تحميل السجل');
+                return;
+            }
+
+            currentLogs = result.data?.data?.logs || [];
+            const pagination = result.data?.data?.pagination || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">سجل العمليات</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || currentLogs.length} سجل</p>
+                    </div>
+                    <button onclick="exportLogs()" class="btn btn-secondary">📥 تصدير</button>
+                </div>
+
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">نوع الفاعل</label>
+                            <select id="actorTypeFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="admin" ${filters.actor_type === 'admin' ? 'selected' : ''}>مدير</option>
+                                <option value="system" ${filters.actor_type === 'system' ? 'selected' : ''}>النظام</option>
+                                <option value="customer" ${filters.actor_type === 'customer' ? 'selected' : ''}>عميل</option>
+                                <option value="merchant" ${filters.actor_type === 'merchant' ? 'selected' : ''}>تاجر</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">نوع العملية</label>
+                            <select id="actionFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="create" ${filters.action === 'create' ? 'selected' : ''}>انشاء</option>
+                                <option value="update" ${filters.action === 'update' ? 'selected' : ''}>تعديل</option>
+                                <option value="delete" ${filters.action === 'delete' ? 'selected' : ''}>حذف</option>
+                                <option value="login" ${filters.action === 'login' ? 'selected' : ''}>دخول</option>
+                                <option value="logout" ${filters.action === 'logout' ? 'selected' : ''}>خروج</option>
+                                <option value="approve" ${filters.action === 'approve' ? 'selected' : ''}>موافقة</option>
+                                <option value="reject" ${filters.action === 'reject' ? 'selected' : ''}>رفض</option>
+                                <option value="suspend" ${filters.action === 'suspend' ? 'selected' : ''}>تعليق</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">نوع الكيان</label>
+                            <select id="entityTypeFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="customer" ${filters.entity_type === 'customer' ? 'selected' : ''}>عميل</option>
+                                <option value="merchant" ${filters.entity_type === 'merchant' ? 'selected' : ''}>تاجر</option>
+                                <option value="transaction" ${filters.entity_type === 'transaction' ? 'selected' : ''}>معاملة</option>
+                                <option value="payment" ${filters.entity_type === 'payment' ? 'selected' : ''}>دفعة</option>
+                                <option value="settlement" ${filters.entity_type === 'settlement' ? 'selected' : ''}>تسوية</option>
+                                <option value="admin" ${filters.entity_type === 'admin' ? 'selected' : ''}>موظف</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">من تاريخ</label>
+                            <input type="date" id="fromDate" class="form-control" value="${filters.from_date || ''}">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الى تاريخ</label>
+                            <input type="date" id="toDate" class="form-control" value="${filters.to_date || ''}">
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">بحث</button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">مسح</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>التاريخ</th>
+                                    <th>الفاعل</th>
+                                    <th>العملية</th>
+                                    <th>الكيان</th>
+                                    <th>التفاصيل</th>
+                                    <th>IP</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentLogs.map(log => `
+                                    <tr>
+                                        <td style="white-space: nowrap;">${formatDateTime(log.created_at)}</td>
+                                        <td>
+                                            <div style="font-weight: 500;">${log.actor_name || log.actor_id || 'النظام'}</div>
+                                            <div style="font-size: 0.75rem; color: var(--gray-500);">${getActorTypeLabel(log.actor_type)}</div>
+                                        </td>
+                                        <td><span class="badge ${getActionBadgeClass(log.action)}">${getActionLabel(log.action)}</span></td>
+                                        <td>
+                                            <div>${getEntityTypeLabel(log.entity_type)}</div>
+                                            <div style="font-size: 0.75rem; font-family: monospace; color: var(--gray-500);">${log.entity_id || '-'}</div>
+                                        </td>
+                                        <td style="max-width: 300px;">
+                                            ${log.details ? `
+                                                <div class="log-details">${typeof log.details === 'object' ? JSON.stringify(log.details, null, 2) : log.details}</div>
+                                            ` : '-'}
+                                        </td>
+                                        <td style="font-family: monospace; font-size: 0.75rem;">${log.ip_address || '-'}</td>
+                                    </tr>
+                                `).join('')}
+                                ${currentLogs.length === 0 ? '<tr><td colspan="6" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا توجد سجلات</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `<button onclick="loadAuditLogs(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">السابق</button>` : ''}
+                            <span style="padding: 0.5rem 1rem; color: var(--gray-600);">صفحة ${currentPage} من ${pagination.pages}</span>
+                            ${currentPage < pagination.pages ? `<button onclick="loadAuditLogs(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">التالي</button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ');
+        }
+    }
+
+    function applyFilters() {
+        const filters = {
+            actor_type: document.getElementById('actorTypeFilter')?.value || '',
+            action: document.getElementById('actionFilter')?.value || '',
+            entity_type: document.getElementById('entityTypeFilter')?.value || '',
+            from_date: document.getElementById('fromDate')?.value || '',
+            to_date: document.getElementById('toDate')?.value || ''
+        };
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadAuditLogs(1, filters);
+    }
+
+    function clearFilters() { loadAuditLogs(1, {}); }
+
+    function getActorTypeLabel(type) {
+        const labels = { 'admin': 'مدير', 'system': 'النظام', 'customer': 'عميل', 'merchant': 'تاجر' };
+        return labels[type] || type || '-';
+    }
+
+    function getActionLabel(action) {
+        const labels = {
+            'create': 'انشاء', 'update': 'تعديل', 'delete': 'حذف',
+            'login': 'دخول', 'logout': 'خروج',
+            'approve': 'موافقة', 'reject': 'رفض', 'suspend': 'تعليق',
+            'activate': 'تفعيل', 'refund': 'استرداد', 'transfer': 'تحويل',
+            'adjust_credit': 'تعديل رصيد', 'update_credit_limit': 'تعديل حد الائتمان',
+            'test_action': 'اختبار'
+        };
+        return labels[action] || action || '-';
+    }
+
+    function getActionBadgeClass(action) {
+        const classes = {
+            'create': 'badge-success', 'update': 'badge-info', 'delete': 'badge-danger',
+            'login': 'badge-gray', 'logout': 'badge-gray',
+            'approve': 'badge-success', 'reject': 'badge-danger', 'suspend': 'badge-warning',
+            'activate': 'badge-success', 'refund': 'badge-warning', 'transfer': 'badge-info',
+            'adjust_credit': 'badge-info', 'update_credit_limit': 'badge-info',
+            'test_action': 'badge-gray'
+        };
+        return classes[action] || 'badge-gray';
+    }
+
+    function getEntityTypeLabel(type) {
+        const labels = {
+            'customer': 'عميل', 'merchant': 'تاجر', 'transaction': 'معاملة',
+            'payment': 'دفعة', 'settlement': 'تسوية', 'admin': 'موظف',
+            'credit_request': 'طلب ائتمان', 'branch': 'فرع', 'staff': 'موظف تاجر'
+        };
+        return labels[type] || type || '-';
+    }
+
+    function exportLogs() {
+        if (currentLogs.length === 0) { alert('لا توجد بيانات'); return; }
+        const data = currentLogs.map(log => ({
+            'التاريخ': log.created_at,
+            'الفاعل': log.actor_name || log.actor_id,
+            'نوع الفاعل': getActorTypeLabel(log.actor_type),
+            'العملية': getActionLabel(log.action),
+            'الكيان': getEntityTypeLabel(log.entity_type),
+            'معرف الكيان': log.entity_id,
+            'IP': log.ip_address,
+            'التفاصيل': typeof log.details === 'object' ? JSON.stringify(log.details) : log.details
+        }));
+        exportToExcel(data, 'audit-logs');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadAuditLogs());
+</script>
+{% endblock %}

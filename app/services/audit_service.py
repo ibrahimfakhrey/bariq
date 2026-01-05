@@ -11,6 +11,6 @@ class AuditService:
         return {'success': True, 'data': {'logs': []}, 'meta': {'page': page, 'total': 0}}
 
     @staticmethod
-    def log_action(actor_type, actor_id, action, entity_type=None, entity_id=None, old_values=None, new_values=None, metadata=None):
+    def log_action(actor_type, actor_id, action, entity_type=None, entity_id=None, old_values=None, new_values=None, metadata=None, details=None):
         """Log an action - to be implemented"""
         pass

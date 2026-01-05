@@ -456,8 +456,8 @@ class AdminService:
             data['branches'] = [b.to_dict() for b in branches]
 
             # Get staff count
-            from app.models.merchant_staff import MerchantStaff
-            data['staff_count'] = MerchantStaff.query.filter_by(merchant_id=merchant_id).count()
+            from app.models.merchant_user import MerchantUser
+            data['staff_count'] = MerchantUser.query.filter_by(merchant_id=merchant_id).count()
 
             # Get transaction summary
             transactions = Transaction.query.filter_by(merchant_id=merchant_id).all()

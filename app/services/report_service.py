@@ -9,18 +9,67 @@ from app.models.merchant import Merchant
 from app.models.transaction import Transaction
 from app.models.payment import Payment
 from app.models.settlement import Settlement
+from app.utils.role_access import (
+    get_merchant_user,
+    validate_branch_access,
+    can_view_reports
+)
 
 
 class ReportService:
     """Report service with full database implementation"""
 
     @staticmethod
-    def get_merchant_summary(merchant_id, branch_id=None, from_date=None, to_date=None):
-        """Get merchant summary report"""
+    def get_merchant_summary(merchant_id, staff_id=None, branch_id=None, from_date=None, to_date=None):
+        """Get merchant summary report with role-based filtering"""
         try:
             query = Transaction.query.filter_by(merchant_id=merchant_id)
 
-            if branch_id:
+            # Apply role-based filtering if staff_id is provided
+            if staff_id:
+                user = get_merchant_user(staff_id)
+                if user:
+                    # Cashiers cannot view reports
+                    if not can_view_reports(user):
+                        return {
+                            'success': False,
+                            'message': 'Cashiers are not authorized to view reports',
+                            'error_code': 'AUTH_003'
+                        }
+                    # Apply branch filtering for non-top-level roles
+                    if not user.can_see_all_branches():
+                        accessible_branch_ids = user.get_accessible_branch_ids()
+                        if accessible_branch_ids:
+                            query = query.filter(Transaction.branch_id.in_(accessible_branch_ids))
+                        else:
+                            return {
+                                'success': True,
+                                'data': {
+                                    'total_transactions': 0,
+                                    'total_amount': 0,
+                                    'paid_amount': 0,
+                                    'total_returns': 0,
+                                    'returns_amount': 0,
+                                    'net_amount': 0
+                                }
+                            }
+
+                    # If branch_id is specified, validate access
+                    if branch_id:
+                        if not validate_branch_access(user, branch_id):
+                            return {
+                                'success': False,
+                                'message': 'Access denied to this branch',
+                                'error_code': 'AUTH_003'
+                            }
+                        query = query.filter_by(branch_id=branch_id)
+                else:
+                    return {
+                        'success': False,
+                        'message': 'Staff member not found',
+                        'error_code': 'MERCH_006'
+                    }
+            elif branch_id:
                 query = query.filter_by(branch_id=branch_id)
 
             if from_date:
@@ -50,12 +99,49 @@ class ReportService:
             return {'success': False, 'message': str(e)}
 
     @staticmethod
-    def get_transaction_report(merchant_id, branch_id=None, from_date=None, to_date=None, group_by='day'):
-        """Get transaction report grouped by period"""
+    def get_transaction_report(merchant_id, staff_id=None, branch_id=None, from_date=None, to_date=None, group_by='day'):
+        """Get transaction report grouped by period with role-based filtering"""
         try:
             query = Transaction.query.filter_by(merchant_id=merchant_id)
 
-            if branch_id:
+            # Apply role-based filtering if staff_id is provided
+            if staff_id:
+                user = get_merchant_user(staff_id)
+                if user:
+                    # Cashiers cannot view reports
+                    if not can_view_reports(user):
+                        return {
+                            'success': False,
+                            'message': 'Cashiers are not authorized to view reports',
+                            'error_code': 'AUTH_003'
+                        }
+                    # Apply branch filtering for non-top-level roles
+                    if not user.can_see_all_branches():
+                        accessible_branch_ids = user.get_accessible_branch_ids()
+                        if accessible_branch_ids:
+                            query = query.filter(Transaction.branch_id.in_(accessible_branch_ids))
+                        else:
+                            return {
+                                'success': True,
+                                'data': {'data': []}
+                            }
+
+                    # If branch_id is specified, validate access
+                    if branch_id:
+                        if not validate_branch_access(user, branch_id):
+                            return {
+                                'success': False,
+                                'message': 'Access denied to this branch',
+                                'error_code': 'AUTH_003'
+                            }
+                        query = query.filter_by(branch_id=branch_id)
+                else:
+                    return {
+                        'success': False,
+                        'message': 'Staff member not found',
+                        'error_code': 'MERCH_006'
+                    }
+            elif branch_id:
                 query = query.filter_by(branch_id=branch_id)
 
             if from_date:

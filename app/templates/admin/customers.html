@@ -1,0 +1,499 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}ادارة العملاء{% endblock %}
+
+{% block page_content %}
+<div id="customers-content">
+    <div class="loading-container">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<!-- Customer Detail Modal -->
+<div id="customerModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 id="modalTitle">تفاصيل العميل</h3>
+            <button onclick="closeModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body">
+            <!-- Content loaded dynamically -->
+        </div>
+    </div>
+</div>
+
+<!-- Credit Adjustment Modal -->
+<div id="creditModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>تعديل الرصيد</h3>
+            <button onclick="closeCreditModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="creditForm" onsubmit="submitCreditAdjustment(event)">
+                <input type="hidden" id="creditCustomerId">
+                <div class="form-group">
+                    <label>نوع العملية</label>
+                    <select id="creditType" class="form-control" required onchange="updateCreditLabel()">
+                        <option value="add">اضافة رصيد</option>
+                        <option value="remove">خصم رصيد</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label id="amountLabel">المبلغ المضاف</label>
+                    <input type="number" id="creditAmount" class="form-control" min="1" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label>السبب</label>
+                    <select id="creditReason" class="form-control" required>
+                        <option value="">اختر السبب</option>
+                        <option value="promotional_bonus">مكافأة ترويجية</option>
+                        <option value="error_correction">تصحيح خطأ</option>
+                        <option value="customer_service">خدمة العملاء</option>
+                        <option value="refund">استرداد</option>
+                        <option value="penalty">خصم جزائي</option>
+                        <option value="fraud_adjustment">تعديل احتيال</option>
+                        <option value="other">أخرى</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>ملاحظات (اختياري)</label>
+                    <textarea id="creditNotes" class="form-control" rows="2"></textarea>
+                </div>
+                <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button type="button" onclick="closeCreditModal()" class="btn btn-secondary">الغاء</button>
+                    <button type="submit" class="btn btn-primary">تنفيذ</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-content {
+    background: white;
+    border-radius: 0.75rem;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--gray-200);
+}
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.125rem;
+}
+.modal-body {
+    padding: 1.5rem;
+}
+.form-group {
+    margin-bottom: 1rem;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--gray-700);
+}
+.form-control {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--gray-300);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+}
+.form-control:focus {
+    outline: none;
+    border-color: var(--teal-500);
+    box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentCustomers = [];
+    let currentPage = 1;
+    let currentFilters = {};
+
+    async function loadCustomers(page = 1, filters = {}) {
+        const container = document.getElementById('customers-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 20, ...filters };
+            const result = await API.admin.getCustomers(params);
+
+            if (!result.success) {
+                showError(container, result.data?.message || 'حدث خطأ في تحميل العملاء');
+                return;
+            }
+
+            currentCustomers = result.data?.data?.customers || [];
+            const pagination = result.data?.data?.pagination || {};
+
+            container.innerHTML = `
+                <!-- Page Header -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">
+                            ادارة العملاء
+                        </h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || 0} عميل</p>
+                    </div>
+                    <button onclick="exportCustomers()" class="btn btn-secondary">
+                        📥 تصدير Excel
+                    </button>
+                </div>
+
+                <!-- Filters -->
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">بحث</label>
+                            <input type="text" id="searchInput" placeholder="اسم، هاتف، رقم بريق..."
+                                   class="form-control" value="${filters.search || ''}"
+                                   onkeyup="if(event.key === 'Enter') applyFilters()">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الحالة</label>
+                            <select id="statusFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="active" ${filters.status === 'active' ? 'selected' : ''}>نشط</option>
+                                <option value="pending" ${filters.status === 'pending' ? 'selected' : ''}>بانتظار التفعيل</option>
+                                <option value="suspended" ${filters.status === 'suspended' ? 'selected' : ''}>موقوف</option>
+                                <option value="blocked" ${filters.status === 'blocked' ? 'selected' : ''}>محظور</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">المدينة</label>
+                            <select id="cityFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="الرياض" ${filters.city === 'الرياض' ? 'selected' : ''}>الرياض</option>
+                                <option value="جدة" ${filters.city === 'جدة' ? 'selected' : ''}>جدة</option>
+                                <option value="مكة" ${filters.city === 'مكة' ? 'selected' : ''}>مكة</option>
+                                <option value="المدينة" ${filters.city === 'المدينة' ? 'selected' : ''}>المدينة</option>
+                            </select>
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">
+                            بحث
+                        </button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">
+                            مسح
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Customers Table -->
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>رقم بريق</th>
+                                    <th>الاسم</th>
+                                    <th>الهاتف</th>
+                                    <th>المدينة</th>
+                                    <th>حد الائتمان</th>
+                                    <th>المستخدم</th>
+                                    <th>الحالة</th>
+                                    <th>الاجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentCustomers.map(c => `
+                                    <tr>
+                                        <td style="font-family: monospace; font-weight: 600;">${c.bariq_id || '-'}</td>
+                                        <td>${c.full_name_ar || c.full_name_en || '-'}</td>
+                                        <td dir="ltr">${c.phone || '-'}</td>
+                                        <td>${c.city || '-'}</td>
+                                        <td>${formatCurrency(c.credit_limit)}</td>
+                                        <td>
+                                            <span style="color: ${c.used_credit > 0 ? 'var(--rose-600)' : 'var(--gray-500)'}">
+                                                ${formatCurrency(c.used_credit)}
+                                            </span>
+                                        </td>
+                                        <td><span class="badge ${getStatusBadgeClass(c.status)}">${getStatusLabel(c.status)}</span></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem;">
+                                                <button onclick="viewCustomer('${c.id}')" class="btn btn-sm btn-secondary" title="عرض">
+                                                    👁️
+                                                </button>
+                                                <button onclick="openCreditModal('${c.id}')" class="btn btn-sm btn-primary" title="تعديل الرصيد">
+                                                    💰
+                                                </button>
+                                                ${c.status === 'active' ? `
+                                                    <button onclick="suspendCustomer('${c.id}')" class="btn btn-sm" style="background: var(--amber-500); color: white;" title="ايقاف">
+                                                        ⏸️
+                                                    </button>
+                                                ` : c.status === 'suspended' ? `
+                                                    <button onclick="activateCustomer('${c.id}')" class="btn btn-sm" style="background: var(--emerald-500); color: white;" title="تفعيل">
+                                                        ▶️
+                                                    </button>
+                                                ` : ''}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${currentCustomers.length === 0 ? `
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; padding: 2rem; color: var(--gray-500);">
+                                            لا توجد نتائج
+                                        </td>
+                                    </tr>
+                                ` : ''}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `
+                                <button onclick="loadCustomers(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">
+                                    السابق
+                                </button>
+                            ` : ''}
+                            <span style="padding: 0.5rem 1rem; color: var(--gray-600);">
+                                صفحة ${currentPage} من ${pagination.pages}
+                            </span>
+                            ${currentPage < pagination.pages ? `
+                                <button onclick="loadCustomers(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">
+                                    التالي
+                                </button>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+        } catch (error) {
+            console.error('Load customers error:', error);
+            showError(container, 'حدث خطأ في تحميل العملاء');
+        }
+    }
+
+    function applyFilters() {
+        const filters = {
+            search: document.getElementById('searchInput')?.value || '',
+            status: document.getElementById('statusFilter')?.value || '',
+            city: document.getElementById('cityFilter')?.value || ''
+        };
+        // Remove empty filters
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadCustomers(1, filters);
+    }
+
+    function clearFilters() {
+        loadCustomers(1, {});
+    }
+
+    async function viewCustomer(id) {
+        const modal = document.getElementById('customerModal');
+        const modalBody = document.getElementById('modalBody');
+        const modalTitle = document.getElementById('modalTitle');
+
+        modal.style.display = 'flex';
+        modalBody.innerHTML = '<div class="loading-container"><div class="spinner"></div></div>';
+
+        try {
+            const result = await API.admin.getCustomer(id);
+            if (!result.success) {
+                modalBody.innerHTML = '<div class="alert alert-error">حدث خطأ في تحميل بيانات العميل</div>';
+                return;
+            }
+
+            const c = result.data?.data || {};
+            modalTitle.textContent = c.full_name_ar || c.full_name_en || 'تفاصيل العميل';
+
+            modalBody.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">رقم بريق</label>
+                        <div style="font-weight: 600; font-size: 1.25rem; font-family: monospace;">${c.bariq_id || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">الحالة</label>
+                        <div><span class="badge ${getStatusBadgeClass(c.status)}">${getStatusLabel(c.status)}</span></div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">الاسم</label>
+                        <div>${c.full_name_ar || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">الهاتف</label>
+                        <div dir="ltr">${c.phone || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">البريد الالكتروني</label>
+                        <div>${c.email || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">رقم الهوية</label>
+                        <div>${c.national_id || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">المدينة</label>
+                        <div>${c.city || '-'}</div>
+                    </div>
+                    <div>
+                        <label style="color: var(--gray-500); font-size: 0.75rem;">تاريخ التسجيل</label>
+                        <div>${formatDate(c.created_at)}</div>
+                    </div>
+                </div>
+
+                <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+                <h4 style="margin-bottom: 1rem;">معلومات الائتمان</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+                    <div class="stat-card stat-card-teal" style="padding: 1rem;">
+                        <div style="color: var(--gray-600); font-size: 0.75rem;">حد الائتمان</div>
+                        <div style="font-size: 1.25rem; font-weight: 700;">${formatCurrency(c.credit_limit)}</div>
+                    </div>
+                    <div class="stat-card stat-card-emerald" style="padding: 1rem;">
+                        <div style="color: var(--gray-600); font-size: 0.75rem;">المتاح</div>
+                        <div style="font-size: 1.25rem; font-weight: 700;">${formatCurrency(c.available_credit)}</div>
+                    </div>
+                    <div class="stat-card stat-card-rose" style="padding: 1rem;">
+                        <div style="color: var(--gray-600); font-size: 0.75rem;">المستخدم</div>
+                        <div style="font-size: 1.25rem; font-weight: 700;">${formatCurrency(c.used_credit)}</div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button onclick="openCreditModal('${c.id}'); closeModal();" class="btn btn-primary">
+                        💰 تعديل الرصيد
+                    </button>
+                    <button onclick="closeModal()" class="btn btn-secondary">اغلاق</button>
+                </div>
+            `;
+
+        } catch (error) {
+            modalBody.innerHTML = '<div class="alert alert-error">حدث خطأ</div>';
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('customerModal').style.display = 'none';
+    }
+
+    function openCreditModal(customerId) {
+        document.getElementById('creditCustomerId').value = customerId;
+        document.getElementById('creditForm').reset();
+        document.getElementById('creditModal').style.display = 'flex';
+        updateCreditLabel();
+    }
+
+    function closeCreditModal() {
+        document.getElementById('creditModal').style.display = 'none';
+    }
+
+    function updateCreditLabel() {
+        const type = document.getElementById('creditType').value;
+        document.getElementById('amountLabel').textContent = type === 'add' ? 'المبلغ المضاف' : 'المبلغ المخصوم';
+    }
+
+    async function submitCreditAdjustment(event) {
+        event.preventDefault();
+
+        const customerId = document.getElementById('creditCustomerId').value;
+        const type = document.getElementById('creditType').value;
+        let amount = parseFloat(document.getElementById('creditAmount').value);
+        const reason = document.getElementById('creditReason').value;
+        const notes = document.getElementById('creditNotes').value;
+
+        if (type === 'remove') {
+            amount = -amount;
+        }
+
+        try {
+            const result = await API.admin.adjustCustomerCredit(customerId, amount, reason, notes);
+            if (result.success) {
+                alert('تم تعديل الرصيد بنجاح');
+                closeCreditModal();
+                loadCustomers(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ في تعديل الرصيد');
+        }
+    }
+
+    async function suspendCustomer(id) {
+        if (!confirm('هل أنت متأكد من ايقاف هذا العميل؟')) return;
+
+        try {
+            const result = await API.admin.updateCustomer(id, { status: 'suspended' });
+            if (result.success) {
+                alert('تم ايقاف العميل');
+                loadCustomers(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ');
+        }
+    }
+
+    async function activateCustomer(id) {
+        if (!confirm('هل أنت متأكد من تفعيل هذا العميل؟')) return;
+
+        try {
+            const result = await API.admin.updateCustomer(id, { status: 'active' });
+            if (result.success) {
+                alert('تم تفعيل العميل');
+                loadCustomers(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ');
+        }
+    }
+
+    function exportCustomers() {
+        if (currentCustomers.length === 0) {
+            alert('لا توجد بيانات للتصدير');
+            return;
+        }
+
+        const exportData = currentCustomers.map(c => ({
+            'رقم بريق': c.bariq_id,
+            'الاسم': c.full_name_ar || c.full_name_en,
+            'الهاتف': c.phone,
+            'البريد': c.email,
+            'المدينة': c.city,
+            'حد الائتمان': c.credit_limit,
+            'المتاح': c.available_credit,
+            'المستخدم': c.used_credit,
+            'الحالة': getStatusLabel(c.status),
+            'تاريخ التسجيل': formatDate(c.created_at)
+        }));
+
+        exportToExcel(exportData, 'customers');
+    }
+
+    // Load on page ready
+    document.addEventListener('DOMContentLoaded', () => loadCustomers());
+</script>
+{% endblock %}

@@ -9,6 +9,17 @@ from app.models.transaction import Transaction
 from app.models.transaction_return import TransactionReturn
 from app.models.merchant import Merchant
 from app.models.branch import Branch
+from app.utils.role_access import (
+    get_merchant_user,
+    validate_branch_access,
+    can_view_settlements
+)
+from app.utils.realtime import (
+    emit_to_merchant,
+    emit_to_branch,
+    emit_to_admins,
+    build_settlement_event_data
+)
 
 
 class SettlementService:
@@ -17,8 +28,8 @@ class SettlementService:
     # ==================== Merchant Views ====================
 
     @staticmethod
-    def get_merchant_settlements(merchant_id, branch_id=None, status=None, page=1, per_page=20):
-        """Get settlements for a merchant"""
+    def get_merchant_settlements(merchant_id, staff_id=None, branch_id=None, status=None, page=1, per_page=20):
+        """Get settlements for a merchant with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -30,7 +41,45 @@ class SettlementService:
 
         query = Settlement.query.filter_by(merchant_id=merchant_id)
 
-        if branch_id:
+        # Apply role-based filtering if staff_id is provided
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers cannot view settlements
+                if not can_view_settlements(user):
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to view settlements',
+                        'error_code': 'AUTH_003'
+                    }
+                # Apply branch filtering for non-top-level roles
+                if not user.can_see_all_branches():
+                    accessible_branch_ids = user.get_accessible_branch_ids()
+                    if accessible_branch_ids:
+                        query = query.filter(Settlement.branch_id.in_(accessible_branch_ids))
+                    else:
+                        return {
+                            'success': True,
+                            'data': {'settlements': []},
+                            'meta': {'page': page, 'per_page': per_page, 'total': 0, 'total_pages': 0}
+                        }
+
+                # If branch_id is specified, validate access
+                if branch_id:
+                    if not validate_branch_access(user, branch_id):
+                        return {
+                            'success': False,
+                            'message': 'Access denied to this branch',
+                            'error_code': 'AUTH_003'
+                        }
+                    query = query.filter_by(branch_id=branch_id)
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+        elif branch_id:
             query = query.filter_by(branch_id=branch_id)
 
         if status:
@@ -63,8 +112,8 @@ class SettlementService:
         }
 
     @staticmethod
-    def get_settlement_details(merchant_id, settlement_id):
-        """Get settlement details for merchant"""
+    def get_settlement_details(merchant_id, settlement_id, staff_id=None):
+        """Get settlement details for merchant with role-based access"""
         settlement = Settlement.query.filter_by(
             id=settlement_id,
             merchant_id=merchant_id
@@ -76,6 +125,31 @@ class SettlementService:
                 'message': 'Settlement not found',
                 'error_code': 'STL_001'
             }
+
+        # Role-based access validation
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers cannot view settlements
+                if not can_view_settlements(user):
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to view settlements',
+                        'error_code': 'AUTH_003'
+                    }
+                # Validate branch access
+                if not validate_branch_access(user, settlement.branch_id):
+                    return {
+                        'success': False,
+                        'message': 'Access denied to this settlement',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
 
         settlement_dict = settlement.to_dict()
         settlement_dict['branch'] = settlement.branch.to_dict()
@@ -340,6 +414,11 @@ class SettlementService:
 
             db.session.commit()
 
+            # Emit real-time events
+            emit_to_merchant(merchant_id, 'settlement_created', build_settlement_event_data(settlement))
+            emit_to_branch(branch_id, 'settlement_created', build_settlement_event_data(settlement))
+            emit_to_admins('settlement_pending', build_settlement_event_data(settlement))
+
             return {
                 'success': True,
                 'message': 'Settlement created successfully',
@@ -413,6 +492,10 @@ class SettlementService:
 
             db.session.commit()
 
+            # Emit real-time events
+            emit_to_merchant(settlement.merchant_id, 'settlement_approved', build_settlement_event_data(settlement))
+            emit_to_branch(settlement.branch_id, 'settlement_approved', build_settlement_event_data(settlement))
+
             # Log the action
             from app.services.audit_service import AuditService
             AuditService.log_action(
@@ -466,6 +549,10 @@ class SettlementService:
             settlement.updated_at = datetime.utcnow()
 
             db.session.commit()
+
+            # Emit real-time events
+            emit_to_merchant(settlement.merchant_id, 'settlement_transferred', build_settlement_event_data(settlement))
+            emit_to_branch(settlement.branch_id, 'settlement_transferred', build_settlement_event_data(settlement))
 
             # Log the action
             from app.services.audit_service import AuditService
@@ -526,6 +613,16 @@ class SettlementService:
                 txn.updated_at = datetime.utcnow()
 
             db.session.commit()
+
+            # Emit real-time events
+            emit_to_merchant(settlement.merchant_id, 'settlement_rejected', {
+                **build_settlement_event_data(settlement),
+                'reason': reason
+            })
+            emit_to_branch(settlement.branch_id, 'settlement_rejected', {
+                **build_settlement_event_data(settlement),
+                'reason': reason
+            })
 
             # Log the action
             from app.services.audit_service import AuditService

@@ -1,0 +1,374 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}لوحة التحكم - الادارة{% endblock %}
+
+{% block page_content %}
+<div id="dashboard-content">
+    <div class="loading-container">
+        <div class="spinner"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    // Chart instances
+    let transactionChart = null;
+    let paymentMethodChart = null;
+    let revenueChart = null;
+
+    async function loadDashboard() {
+        const container = document.getElementById('dashboard-content');
+
+        try {
+            // Load dashboard data
+            const [dashboardResult, customersResult, merchantsResult, transactionsResult, paymentsResult, settlementsResult] = await Promise.all([
+                API.admin.getDashboard(),
+                API.admin.getCustomers({ per_page: 5 }),
+                API.admin.getMerchants({ per_page: 5 }),
+                API.admin.getTransactions({ per_page: 10 }),
+                API.admin.getPayments({ per_page: 10 }),
+                API.admin.getSettlements({ status: 'pending' })
+            ]);
+
+            // Extract data with fallbacks
+            const stats = dashboardResult.data?.data || {};
+            const customers = customersResult.data?.data?.customers || [];
+            const merchants = merchantsResult.data?.data?.merchants || [];
+            const transactions = transactionsResult.data?.data?.transactions || [];
+            const payments = paymentsResult.data?.data?.payments || [];
+            const pendingSettlements = settlementsResult.data?.data?.settlements || [];
+
+            // Calculate stats from available data
+            const totalCustomers = customersResult.data?.data?.pagination?.total || customers.length;
+            const totalMerchants = merchantsResult.data?.data?.pagination?.total || merchants.length;
+            const totalTransactions = transactionsResult.data?.data?.pagination?.total || transactions.length;
+            const pendingSettlementsCount = pendingSettlements.length;
+
+            // Calculate totals
+            const totalRevenue = transactions.reduce((sum, t) => sum + parseFloat(t.total_amount || 0), 0);
+            const overdueTransactions = transactions.filter(t => t.status === 'overdue');
+            const overdueAmount = overdueTransactions.reduce((sum, t) => sum + parseFloat(t.remaining_amount || 0), 0);
+
+            container.innerHTML = `
+                <!-- Page Header -->
+                <div style="margin-bottom: 2rem;">
+                    <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.5rem;">
+                        لوحة التحكم
+                    </h1>
+                    <p style="color: var(--gray-500);">نظرة عامة على النظام</p>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="grid-4" style="margin-bottom: 2rem;">
+                    <div class="stat-card stat-card-teal">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-label">اجمالي الايرادات</div>
+                        <div class="stat-value">${formatCurrency(totalRevenue)}</div>
+                    </div>
+                    <div class="stat-card stat-card-emerald">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-label">العملاء</div>
+                        <div class="stat-value">${totalCustomers}</div>
+                    </div>
+                    <div class="stat-card stat-card-sky">
+                        <div class="stat-icon">🏪</div>
+                        <div class="stat-label">التجار</div>
+                        <div class="stat-value">${totalMerchants}</div>
+                    </div>
+                    <div class="stat-card stat-card-amber">
+                        <div class="stat-icon">⏳</div>
+                        <div class="stat-label">تسويات معلقة</div>
+                        <div class="stat-value">${pendingSettlementsCount}</div>
+                    </div>
+                </div>
+
+                <!-- Alert Cards -->
+                ${overdueTransactions.length > 0 ? `
+                <div class="card" style="background: linear-gradient(135deg, var(--rose-50), var(--rose-100)); border-color: var(--rose-200); margin-bottom: 1.5rem;">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <div style="font-size: 2rem;">⚠️</div>
+                        <div>
+                            <div style="font-weight: 600; color: var(--rose-700);">معاملات متأخرة</div>
+                            <div style="color: var(--rose-600);">
+                                ${overdueTransactions.length} معاملة متأخرة بقيمة ${formatCurrency(overdueAmount)}
+                            </div>
+                        </div>
+                        <a href="/admin/transactions?status=overdue" class="btn btn-sm" style="margin-right: auto; background: var(--rose-600); color: white;">
+                            عرض التفاصيل
+                        </a>
+                    </div>
+                </div>
+                ` : ''}
+
+                <!-- Charts Section -->
+                <div class="grid-2" style="margin-bottom: 2rem;">
+                    <div class="card">
+                        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">المعاملات (آخر 7 أيام)</h3>
+                        <div style="height: 250px; position: relative;">
+                            <canvas id="transactionChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3 style="font-size: 1rem; font-weight: 600; margin-bottom: 1rem;">طرق الدفع</h3>
+                        <div style="height: 250px; position: relative;">
+                            <canvas id="paymentMethodChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="grid-4" style="margin-bottom: 2rem;">
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">📋</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900);">${totalTransactions}</div>
+                        <div style="color: var(--gray-500); font-size: 0.875rem;">اجمالي المعاملات</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">✅</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--emerald-600);">${transactions.filter(t => t.status === 'paid').length}</div>
+                        <div style="color: var(--gray-500); font-size: 0.875rem;">مدفوعة</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">⏳</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--amber-600);">${transactions.filter(t => t.status === 'pending' || t.status === 'confirmed').length}</div>
+                        <div style="color: var(--gray-500); font-size: 0.875rem;">قيد التنفيذ</div>
+                    </div>
+                    <div class="card" style="text-align: center;">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🚨</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--rose-600);">${overdueTransactions.length}</div>
+                        <div style="color: var(--gray-500); font-size: 0.875rem;">متأخرة</div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="grid-2">
+                    <!-- Recent Transactions -->
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="font-size: 1rem; font-weight: 600;">أحدث المعاملات</h3>
+                            <a href="/admin/transactions" style="color: var(--teal-600); font-size: 0.875rem;">عرض الكل</a>
+                        </div>
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>الرقم المرجعي</th>
+                                        <th>المبلغ</th>
+                                        <th>الحالة</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${transactions.slice(0, 5).map(t => `
+                                        <tr>
+                                            <td style="font-family: monospace;">${t.reference_number || '-'}</td>
+                                            <td>${formatCurrency(t.total_amount)}</td>
+                                            <td><span class="badge ${getStatusBadgeClass(t.status)}">${getStatusLabel(t.status)}</span></td>
+                                        </tr>
+                                    `).join('')}
+                                    ${transactions.length === 0 ? '<tr><td colspan="3" style="text-align: center; color: var(--gray-500);">لا توجد معاملات</td></tr>' : ''}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Recent Payments -->
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="font-size: 1rem; font-weight: 600;">أحدث المدفوعات</h3>
+                            <a href="/admin/payments" style="color: var(--teal-600); font-size: 0.875rem;">عرض الكل</a>
+                        </div>
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>الرقم المرجعي</th>
+                                        <th>المبلغ</th>
+                                        <th>الطريقة</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${payments.slice(0, 5).map(p => `
+                                        <tr>
+                                            <td style="font-family: monospace;">${p.reference_number || '-'}</td>
+                                            <td>${formatCurrency(p.amount)}</td>
+                                            <td>${p.payment_method || '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                    ${payments.length === 0 ? '<tr><td colspan="3" style="text-align: center; color: var(--gray-500);">لا توجد مدفوعات</td></tr>' : ''}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pending Settlements -->
+                ${pendingSettlements.length > 0 ? `
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="font-size: 1rem; font-weight: 600;">تسويات بانتظار الموافقة</h3>
+                        <a href="/admin/settlements" style="color: var(--teal-600); font-size: 0.875rem;">عرض الكل</a>
+                    </div>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>الرقم المرجعي</th>
+                                    <th>التاجر</th>
+                                    <th>المبلغ الصافي</th>
+                                    <th>الاجراء</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${pendingSettlements.slice(0, 5).map(s => `
+                                    <tr>
+                                        <td style="font-family: monospace;">${s.reference_number || '-'}</td>
+                                        <td>${s.merchant?.name_ar || '-'}</td>
+                                        <td>${formatCurrency(s.net_amount)}</td>
+                                        <td>
+                                            <button onclick="approveSettlement('${s.id}')" class="btn btn-sm btn-primary">
+                                                موافقة
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                ` : ''}
+            `;
+
+            // Initialize charts
+            initCharts(transactions, payments);
+
+        } catch (error) {
+            console.error('Dashboard error:', error);
+            showError(container, 'حدث خطأ في تحميل لوحة التحكم');
+        }
+    }
+
+    function initCharts(transactions, payments) {
+        // Transaction Chart (Bar)
+        const transactionCtx = document.getElementById('transactionChart');
+        if (transactionCtx) {
+            // Group transactions by day
+            const last7Days = [];
+            const today = new Date();
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date(today);
+                date.setDate(date.getDate() - i);
+                last7Days.push(date.toISOString().split('T')[0]);
+            }
+
+            const transactionsByDay = last7Days.map(day => {
+                return transactions.filter(t => t.created_at && t.created_at.startsWith(day)).length;
+            });
+
+            transactionChart = new Chart(transactionCtx, {
+                type: 'bar',
+                data: {
+                    labels: last7Days.map(d => {
+                        const date = new Date(d);
+                        return date.toLocaleDateString('ar-SA', { weekday: 'short' });
+                    }),
+                    datasets: [{
+                        label: 'المعاملات',
+                        data: transactionsByDay,
+                        backgroundColor: 'rgba(20, 184, 166, 0.8)',
+                        borderColor: 'rgba(20, 184, 166, 1)',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { stepSize: 1 }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Payment Method Chart (Doughnut)
+        const paymentCtx = document.getElementById('paymentMethodChart');
+        if (paymentCtx) {
+            const methodCounts = {};
+            payments.forEach(p => {
+                const method = p.payment_method || 'other';
+                methodCounts[method] = (methodCounts[method] || 0) + 1;
+            });
+
+            const methodLabels = {
+                'creditcard': 'بطاقة ائتمان',
+                'mada': 'مدى',
+                'applepay': 'Apple Pay',
+                'stcpay': 'STC Pay',
+                'cash': 'نقدي',
+                'bank_transfer': 'تحويل بنكي',
+                'paytabs': 'PayTabs',
+                'other': 'أخرى'
+            };
+
+            const colors = [
+                'rgba(20, 184, 166, 0.8)',
+                'rgba(16, 185, 129, 0.8)',
+                'rgba(245, 158, 11, 0.8)',
+                'rgba(239, 68, 68, 0.8)',
+                'rgba(99, 102, 241, 0.8)',
+                'rgba(236, 72, 153, 0.8)'
+            ];
+
+            paymentMethodChart = new Chart(paymentCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(methodCounts).map(k => methodLabels[k] || k),
+                    datasets: [{
+                        data: Object.values(methodCounts),
+                        backgroundColor: colors.slice(0, Object.keys(methodCounts).length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            rtl: true
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    async function approveSettlement(id) {
+        if (!confirm('هل أنت متأكد من الموافقة على هذه التسوية؟')) return;
+
+        try {
+            const result = await API.admin.approveSettlement(id);
+            if (result.success) {
+                alert('تمت الموافقة على التسوية بنجاح');
+                loadDashboard();
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ في الموافقة على التسوية');
+        }
+    }
+
+    // Load dashboard on page load
+    document.addEventListener('DOMContentLoaded', loadDashboard);
+</script>
+{% endblock %}

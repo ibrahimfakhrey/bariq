@@ -1,0 +1,134 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}مراقبة المعاملات{% endblock %}
+
+{% block page_content %}
+<div id="transactions-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<style>
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentTransactions = [];
+    let currentPage = 1;
+    let currentFilters = {};
+
+    async function loadTransactions(page = 1, filters = {}) {
+        const container = document.getElementById('transactions-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 20, ...filters };
+            const result = await API.admin.getTransactions(params);
+            currentTransactions = result.data?.data?.transactions || [];
+            const pagination = result.data?.data?.pagination || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">مراقبة المعاملات</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || 0} معاملة</p>
+                    </div>
+                    <button onclick="exportTransactions()" class="btn btn-secondary">📥 تصدير Excel</button>
+                </div>
+
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الحالة</label>
+                            <select id="statusFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="pending" ${filters.status === 'pending' ? 'selected' : ''}>بانتظار التأكيد</option>
+                                <option value="confirmed" ${filters.status === 'confirmed' ? 'selected' : ''}>مؤكدة</option>
+                                <option value="paid" ${filters.status === 'paid' ? 'selected' : ''}>مدفوعة</option>
+                                <option value="overdue" ${filters.status === 'overdue' ? 'selected' : ''}>متأخرة</option>
+                                <option value="cancelled" ${filters.status === 'cancelled' ? 'selected' : ''}>ملغية</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">من تاريخ</label>
+                            <input type="date" id="fromDate" class="form-control" value="${filters.from_date || ''}">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الى تاريخ</label>
+                            <input type="date" id="toDate" class="form-control" value="${filters.to_date || ''}">
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">بحث</button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">مسح</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>الرقم المرجعي</th>
+                                    <th>العميل</th>
+                                    <th>التاجر</th>
+                                    <th>المبلغ</th>
+                                    <th>المدفوع</th>
+                                    <th>تاريخ الاستحقاق</th>
+                                    <th>الحالة</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentTransactions.map(t => `
+                                    <tr style="${t.status === 'overdue' ? 'background: var(--rose-50);' : ''}">
+                                        <td style="font-family: monospace; font-weight: 600;">${t.reference_number || '-'}</td>
+                                        <td>${t.customer?.full_name_ar || t.customer?.bariq_id || '-'}</td>
+                                        <td>${t.merchant?.name_ar || '-'}</td>
+                                        <td>${formatCurrency(t.total_amount)}</td>
+                                        <td>${formatCurrency(t.paid_amount)}</td>
+                                        <td>${formatDate(t.due_date)}</td>
+                                        <td><span class="badge ${getStatusBadgeClass(t.status)}">${getStatusLabel(t.status)}</span></td>
+                                    </tr>
+                                `).join('')}
+                                ${currentTransactions.length === 0 ? '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا توجد نتائج</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `<button onclick="loadTransactions(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">السابق</button>` : ''}
+                            <span style="padding: 0.5rem 1rem;">صفحة ${currentPage} من ${pagination.pages}</span>
+                            ${currentPage < pagination.pages ? `<button onclick="loadTransactions(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">التالي</button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) { showError(container, 'حدث خطأ'); }
+    }
+
+    function applyFilters() {
+        const filters = {
+            status: document.getElementById('statusFilter')?.value || '',
+            from_date: document.getElementById('fromDate')?.value || '',
+            to_date: document.getElementById('toDate')?.value || ''
+        };
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadTransactions(1, filters);
+    }
+
+    function clearFilters() { loadTransactions(1, {}); }
+
+    function exportTransactions() {
+        if (currentTransactions.length === 0) { alert('لا توجد بيانات'); return; }
+        const data = currentTransactions.map(t => ({
+            'الرقم المرجعي': t.reference_number, 'العميل': t.customer?.full_name_ar,
+            'التاجر': t.merchant?.name_ar, 'المبلغ': t.total_amount, 'المدفوع': t.paid_amount,
+            'تاريخ الاستحقاق': t.due_date, 'الحالة': getStatusLabel(t.status)
+        }));
+        exportToExcel(data, 'transactions');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadTransactions());
+</script>
+{% endblock %}

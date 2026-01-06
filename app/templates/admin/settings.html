@@ -1,0 +1,337 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}اعدادات النظام{% endblock %}
+
+{% block page_content %}
+<div id="settings-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<style>
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+.settings-section { margin-bottom: 2rem; }
+.settings-section h3 { font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+.settings-row { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid var(--gray-100); }
+.settings-row:last-child { border-bottom: none; }
+.settings-label { flex: 1; }
+.settings-label h4 { font-weight: 500; color: var(--gray-900); margin-bottom: 0.25rem; }
+.settings-label p { font-size: 0.875rem; color: var(--gray-500); margin: 0; }
+.settings-value { min-width: 200px; text-align: left; }
+.toggle-switch { position: relative; width: 48px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--gray-300); transition: .3s; border-radius: 24px; }
+.toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+input:checked + .toggle-slider { background-color: var(--teal-500); }
+input:checked + .toggle-slider:before { transform: translateX(24px); }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentSettings = {};
+
+    async function loadSettings() {
+        const container = document.getElementById('settings-content');
+
+        try {
+            const result = await API.admin.getSettings();
+            currentSettings = result.data?.data || {};
+
+            // Default values if not set
+            const settings = {
+                default_credit_limit: currentSettings.default_credit_limit || 5000,
+                max_credit_limit: currentSettings.max_credit_limit || 50000,
+                repayment_days: currentSettings.repayment_days || 30,
+                min_transaction_amount: currentSettings.min_transaction_amount || 10,
+                max_transaction_amount: currentSettings.max_transaction_amount || 10000,
+                default_commission_rate: currentSettings.default_commission_rate || 2.5,
+                late_fee_rate: currentSettings.late_fee_rate || 5,
+                grace_period_days: currentSettings.grace_period_days || 3,
+                paytabs_sandbox: currentSettings.paytabs_sandbox || false,
+                email_notifications: currentSettings.email_notifications !== false,
+                sms_notifications: currentSettings.sms_notifications !== false,
+                push_notifications: currentSettings.push_notifications !== false,
+                auto_settlement: currentSettings.auto_settlement !== false,
+                settlement_day: currentSettings.settlement_day || 1
+            };
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">اعدادات النظام</h1>
+                        <p style="color: var(--gray-500);">ادارة اعدادات النظام والقواعد</p>
+                    </div>
+                </div>
+
+                <!-- Business Rules -->
+                <div class="card settings-section">
+                    <h3>💼 قواعد العمل</h3>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>الحد الائتماني الافتراضي</h4>
+                            <p>الحد الائتماني المبدئي للعملاء الجدد</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="default_credit_limit" class="form-control" style="width: 120px;" value="${settings.default_credit_limit}" min="0">
+                                <span>ر.س</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>الحد الائتماني الأقصى</h4>
+                            <p>أقصى حد ائتماني يمكن منحه للعميل</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="max_credit_limit" class="form-control" style="width: 120px;" value="${settings.max_credit_limit}" min="0">
+                                <span>ر.س</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>فترة السداد</h4>
+                            <p>عدد الأيام المسموحة للسداد</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="repayment_days" class="form-control" style="width: 80px;" value="${settings.repayment_days}" min="1" max="90">
+                                <span>يوم</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>الحد الأدنى للمعاملة</h4>
+                            <p>أقل مبلغ مسموح به للمعاملة الواحدة</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="min_transaction_amount" class="form-control" style="width: 120px;" value="${settings.min_transaction_amount}" min="1">
+                                <span>ر.س</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>الحد الأقصى للمعاملة</h4>
+                            <p>أعلى مبلغ مسموح به للمعاملة الواحدة</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="max_transaction_amount" class="form-control" style="width: 120px;" value="${settings.max_transaction_amount}" min="1">
+                                <span>ر.س</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Commission Settings -->
+                <div class="card settings-section">
+                    <h3>💰 العمولات والرسوم</h3>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>نسبة العمولة الافتراضية</h4>
+                            <p>نسبة العمولة المطبقة على التجار الجدد</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="default_commission_rate" class="form-control" style="width: 80px;" value="${settings.default_commission_rate}" min="0" max="100" step="0.1">
+                                <span>%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>نسبة رسوم التأخير</h4>
+                            <p>الرسوم المطبقة على المدفوعات المتأخرة</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="late_fee_rate" class="form-control" style="width: 80px;" value="${settings.late_fee_rate}" min="0" max="100" step="0.1">
+                                <span>%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>فترة السماح</h4>
+                            <p>عدد أيام السماح قبل تطبيق رسوم التأخير</p>
+                        </div>
+                        <div class="settings-value">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="grace_period_days" class="form-control" style="width: 80px;" value="${settings.grace_period_days}" min="0" max="30">
+                                <span>يوم</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settlement Settings -->
+                <div class="card settings-section">
+                    <h3>🏦 التسويات</h3>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>التسوية التلقائية</h4>
+                            <p>انشاء تسويات التجار تلقائياً</p>
+                        </div>
+                        <div class="settings-value">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="auto_settlement" ${settings.auto_settlement ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>يوم التسوية الشهرية</h4>
+                            <p>اليوم من كل شهر لإنشاء التسويات</p>
+                        </div>
+                        <div class="settings-value">
+                            <select id="settlement_day" class="form-control" style="width: 120px;">
+                                ${[1,5,10,15,20,25,28].map(d => `<option value="${d}" ${settings.settlement_day == d ? 'selected' : ''}>يوم ${d}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Payment Gateway -->
+                <div class="card settings-section">
+                    <h3>💳 بوابة الدفع</h3>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>وضع الاختبار (Sandbox)</h4>
+                            <p>تفعيل وضع الاختبار لبوابة PayTabs</p>
+                        </div>
+                        <div class="settings-value">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="paytabs_sandbox" ${settings.paytabs_sandbox ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>مفتاح API</h4>
+                            <p>مفتاح PayTabs Server Key</p>
+                        </div>
+                        <div class="settings-value">
+                            <input type="password" id="paytabs_server_key" class="form-control" placeholder="••••••••••••" style="width: 200px;">
+                            <small style="display: block; color: var(--gray-500); margin-top: 0.25rem;">اتركه فارغاً للاحتفاظ بالقيمة الحالية</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notifications -->
+                <div class="card settings-section">
+                    <h3>🔔 الاشعارات</h3>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>اشعارات البريد الالكتروني</h4>
+                            <p>ارسال اشعارات عبر البريد الالكتروني</p>
+                        </div>
+                        <div class="settings-value">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="email_notifications" ${settings.email_notifications ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>اشعارات الرسائل النصية</h4>
+                            <p>ارسال اشعارات عبر SMS</p>
+                        </div>
+                        <div class="settings-value">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="sms_notifications" ${settings.sms_notifications ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <div class="settings-label">
+                            <h4>اشعارات الدفع (Push)</h4>
+                            <p>ارسال اشعارات فورية للتطبيق</p>
+                        </div>
+                        <div class="settings-value">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="push_notifications" ${settings.push_notifications ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Save Button -->
+                <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem;">
+                    <button onclick="loadSettings()" class="btn btn-secondary">الغاء التغييرات</button>
+                    <button onclick="saveSettings()" class="btn btn-primary">حفظ الاعدادات</button>
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ في تحميل الاعدادات');
+        }
+    }
+
+    async function saveSettings() {
+        const settings = {
+            default_credit_limit: parseFloat(document.getElementById('default_credit_limit').value),
+            max_credit_limit: parseFloat(document.getElementById('max_credit_limit').value),
+            repayment_days: parseInt(document.getElementById('repayment_days').value),
+            min_transaction_amount: parseFloat(document.getElementById('min_transaction_amount').value),
+            max_transaction_amount: parseFloat(document.getElementById('max_transaction_amount').value),
+            default_commission_rate: parseFloat(document.getElementById('default_commission_rate').value),
+            late_fee_rate: parseFloat(document.getElementById('late_fee_rate').value),
+            grace_period_days: parseInt(document.getElementById('grace_period_days').value),
+            auto_settlement: document.getElementById('auto_settlement').checked,
+            settlement_day: parseInt(document.getElementById('settlement_day').value),
+            paytabs_sandbox: document.getElementById('paytabs_sandbox').checked,
+            email_notifications: document.getElementById('email_notifications').checked,
+            sms_notifications: document.getElementById('sms_notifications').checked,
+            push_notifications: document.getElementById('push_notifications').checked
+        };
+
+        // Add PayTabs key only if provided
+        const paytabsKey = document.getElementById('paytabs_server_key').value;
+        if (paytabsKey) {
+            settings.paytabs_server_key = paytabsKey;
+        }
+
+        // Validate
+        if (settings.default_credit_limit > settings.max_credit_limit) {
+            alert('الحد الافتراضي لا يمكن أن يتجاوز الحد الأقصى');
+            return;
+        }
+        if (settings.min_transaction_amount > settings.max_transaction_amount) {
+            alert('الحد الأدنى للمعاملة لا يمكن أن يتجاوز الحد الأقصى');
+            return;
+        }
+
+        try {
+            // Save each setting
+            let allSuccess = true;
+            for (const [key, value] of Object.entries(settings)) {
+                const result = await API.admin.updateSetting(key, value);
+                if (!result.success) {
+                    allSuccess = false;
+                    console.error(`Failed to save ${key}:`, result.data?.message);
+                }
+            }
+
+            if (allSuccess) {
+                alert('تم حفظ الاعدادات بنجاح');
+            } else {
+                alert('تم حفظ بعض الاعدادات. تحقق من السجل للمزيد من التفاصيل.');
+            }
+        } catch (error) {
+            alert('حدث خطأ في حفظ الاعدادات');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadSettings);
+</script>
+{% endblock %}

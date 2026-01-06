@@ -81,11 +81,17 @@ def update_merchant_profile():
 @merchants_bp.route('/me/regions', methods=['GET'])
 @jwt_required()
 def get_regions():
-    """Get all regions"""
+    """Get all regions (role-filtered)"""
     from app.services.merchant_service import MerchantService
 
     identity = current_user
-    result = MerchantService.get_regions(identity['merchant_id'])
+    result = MerchantService.get_regions(
+        identity['merchant_id'],
+        staff_id=identity['id']
+    )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -142,7 +148,7 @@ def delete_region(region_id):
 @merchants_bp.route('/me/branches', methods=['GET'])
 @jwt_required()
 def get_branches():
-    """Get all branches"""
+    """Get all branches (role-filtered)"""
     from app.services.merchant_service import MerchantService
 
     identity = current_user
@@ -151,9 +157,13 @@ def get_branches():
 
     result = MerchantService.get_branches(
         identity['merchant_id'],
+        staff_id=identity['id'],
         region_id=region_id,
         is_active=is_active
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -210,7 +220,7 @@ def update_branch(branch_id):
 @merchants_bp.route('/me/staff', methods=['GET'])
 @jwt_required()
 def get_staff():
-    """Get all staff"""
+    """Get all staff (role-filtered)"""
     from app.services.merchant_service import MerchantService
 
     identity = current_user
@@ -219,9 +229,13 @@ def get_staff():
 
     result = MerchantService.get_staff(
         identity['merchant_id'],
+        requester_id=identity['id'],
         role=role,
         branch_id=branch_id
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -245,13 +259,19 @@ def create_staff():
 @merchants_bp.route('/me/staff/<staff_id>', methods=['GET'])
 @jwt_required()
 def get_staff_member(staff_id):
-    """Get staff member details"""
+    """Get staff member details (role-validated)"""
     from app.services.merchant_service import MerchantService
 
     identity = current_user
-    result = MerchantService.get_staff_member(identity['merchant_id'], staff_id)
+    result = MerchantService.get_staff_member(
+        identity['merchant_id'],
+        staff_id,
+        requester_id=identity['id']
+    )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 404
 
     return jsonify(result)
@@ -260,14 +280,21 @@ def get_staff_member(staff_id):
 @merchants_bp.route('/me/staff/<staff_id>', methods=['PUT'])
 @jwt_required()
 def update_staff(staff_id):
-    """Update staff"""
+    """Update staff (role-validated)"""
     from app.services.merchant_service import MerchantService
 
     identity = current_user
     data = request.get_json()
-    result = MerchantService.update_staff(identity['merchant_id'], staff_id, data)
+    result = MerchantService.update_staff(
+        identity['merchant_id'],
+        staff_id,
+        data,
+        requester_id=identity['id']
+    )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 400
 
     return jsonify(result)
@@ -339,7 +366,7 @@ def create_transaction():
 @merchants_bp.route('/me/transactions', methods=['GET'])
 @jwt_required()
 def get_transactions():
-    """Get transactions"""
+    """Get transactions (role-filtered)"""
     from app.services.transaction_service import TransactionService
 
     identity = current_user
@@ -353,7 +380,8 @@ def get_transactions():
 
     result = TransactionService.get_merchant_transactions(
         merchant_id=identity['merchant_id'],
-        branch_id=branch_id or identity.get('branch_id'),
+        staff_id=identity['id'],
+        branch_id=branch_id,
         status=status,
         from_date=from_date,
         to_date=to_date,
@@ -361,22 +389,28 @@ def get_transactions():
         per_page=per_page
     )
 
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
+
     return jsonify(result)
 
 
 @merchants_bp.route('/me/transactions/<transaction_id>', methods=['GET'])
 @jwt_required()
 def get_transaction(transaction_id):
-    """Get transaction details"""
+    """Get transaction details (role-validated)"""
     from app.services.transaction_service import TransactionService
 
     identity = current_user
     result = TransactionService.get_transaction_for_merchant(
         identity['merchant_id'],
-        transaction_id
+        transaction_id,
+        staff_id=identity['id']
     )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 404
 
     return jsonify(result)
@@ -385,7 +419,7 @@ def get_transaction(transaction_id):
 @merchants_bp.route('/me/transactions/<transaction_id>/cancel', methods=['POST'])
 @jwt_required()
 def cancel_transaction(transaction_id):
-    """Cancel pending transaction"""
+    """Cancel pending transaction (role-validated)"""
     from app.services.transaction_service import TransactionService
 
     identity = current_user
@@ -394,10 +428,13 @@ def cancel_transaction(transaction_id):
     result = TransactionService.cancel_transaction(
         identity['merchant_id'],
         transaction_id,
-        data.get('reason')
+        data.get('reason'),
+        staff_id=identity['id']
     )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 400
 
     return jsonify(result)
@@ -408,7 +445,7 @@ def cancel_transaction(transaction_id):
 @merchants_bp.route('/me/transactions/<transaction_id>/returns', methods=['POST'])
 @jwt_required()
 def create_return(transaction_id):
-    """Process return"""
+    """Process return (role-validated)"""
     from app.services.transaction_service import TransactionService
 
     identity = current_user
@@ -421,10 +458,13 @@ def create_return(transaction_id):
         reason=data.get('reason'),
         reason_details=data.get('reason_details'),
         returned_items=data.get('returned_items', []),
-        processed_by=identity['id']
+        processed_by=identity['id'],
+        staff_id=identity['id']
     )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 400
 
     return jsonify(result), 201
@@ -433,7 +473,7 @@ def create_return(transaction_id):
 @merchants_bp.route('/me/returns', methods=['GET'])
 @jwt_required()
 def get_returns():
-    """Get all returns"""
+    """Get all returns (role-filtered)"""
     from app.services.transaction_service import TransactionService
 
     identity = current_user
@@ -444,10 +484,14 @@ def get_returns():
 
     result = TransactionService.get_merchant_returns(
         merchant_id=identity['merchant_id'],
+        staff_id=identity['id'],
         branch_id=branch_id,
         from_date=from_date,
         to_date=to_date
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -457,7 +501,7 @@ def get_returns():
 @merchants_bp.route('/me/reports/summary', methods=['GET'])
 @jwt_required()
 def get_reports_summary():
-    """Get summary dashboard"""
+    """Get summary dashboard (role-filtered)"""
     from app.services.report_service import ReportService
 
     identity = current_user
@@ -468,10 +512,14 @@ def get_reports_summary():
 
     result = ReportService.get_merchant_summary(
         merchant_id=identity['merchant_id'],
+        staff_id=identity['id'],
         branch_id=branch_id,
         from_date=from_date,
         to_date=to_date
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -479,7 +527,7 @@ def get_reports_summary():
 @merchants_bp.route('/me/reports/transactions', methods=['GET'])
 @jwt_required()
 def get_reports_transactions():
-    """Detailed transaction report"""
+    """Detailed transaction report (role-filtered)"""
     from app.services.report_service import ReportService
 
     identity = current_user
@@ -491,11 +539,15 @@ def get_reports_transactions():
 
     result = ReportService.get_transaction_report(
         merchant_id=identity['merchant_id'],
+        staff_id=identity['id'],
         branch_id=branch_id,
         from_date=from_date,
         to_date=to_date,
         group_by=group_by
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -505,7 +557,7 @@ def get_reports_transactions():
 @merchants_bp.route('/me/settlements', methods=['GET'])
 @jwt_required()
 def get_settlements():
-    """Get settlements"""
+    """Get settlements (role-filtered)"""
     from app.services.settlement_service import SettlementService
 
     identity = current_user
@@ -516,10 +568,14 @@ def get_settlements():
 
     result = SettlementService.get_merchant_settlements(
         merchant_id=identity['merchant_id'],
+        staff_id=identity['id'],
         branch_id=branch_id,
         status=status,
         page=page
     )
+
+    if not result['success'] and result.get('error_code') == 'AUTH_003':
+        return jsonify(result), 403
 
     return jsonify(result)
 
@@ -527,16 +583,19 @@ def get_settlements():
 @merchants_bp.route('/me/settlements/<settlement_id>', methods=['GET'])
 @jwt_required()
 def get_settlement(settlement_id):
-    """Get settlement details"""
+    """Get settlement details (role-validated)"""
     from app.services.settlement_service import SettlementService
 
     identity = current_user
     result = SettlementService.get_settlement_details(
         identity['merchant_id'],
-        settlement_id
+        settlement_id,
+        staff_id=identity['id']
     )
 
     if not result['success']:
+        if result.get('error_code') == 'AUTH_003':
+            return jsonify(result), 403
         return jsonify(result), 404
 
     return jsonify(result)

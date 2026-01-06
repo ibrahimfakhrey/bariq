@@ -1,0 +1,397 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}ادارة التسويات{% endblock %}
+
+{% block page_content %}
+<div id="settlements-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<!-- Settlement Detail Modal -->
+<div id="settlementModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+            <h3 id="modalTitle">تفاصيل التسوية</h3>
+            <button onclick="closeModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+    </div>
+</div>
+
+<!-- Transfer Modal -->
+<div id="transferModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>تأكيد التحويل</h3>
+            <button onclick="closeTransferModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>رقم التسوية</label>
+                <input type="text" id="transferSettlementRef" class="form-control" readonly>
+            </div>
+            <div class="form-group">
+                <label>التاجر</label>
+                <input type="text" id="transferMerchant" class="form-control" readonly>
+            </div>
+            <div class="form-group">
+                <label>المبلغ الصافي</label>
+                <input type="text" id="transferAmount" class="form-control" readonly>
+            </div>
+            <div class="form-group">
+                <label>رقم مرجع التحويل البنكي <span style="color: var(--rose-500);">*</span></label>
+                <input type="text" id="transferReference" class="form-control" placeholder="مثال: TRF2026010400123" required>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button onclick="closeTransferModal()" class="btn btn-secondary">الغاء</button>
+                <button onclick="confirmTransfer()" class="btn btn-primary">تأكيد التحويل</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-content { background: white; border-radius: 0.75rem; width: 90%; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--gray-200); }
+.modal-header h3 { margin: 0; font-size: 1.125rem; }
+.modal-body { padding: 1.5rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--gray-700); }
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentSettlements = [];
+    let currentPage = 1;
+    let currentFilters = {};
+    let selectedSettlement = null;
+
+    async function loadSettlements(page = 1, filters = {}) {
+        const container = document.getElementById('settlements-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 20, ...filters };
+            const result = await API.admin.getSettlements(params);
+
+            if (!result.success) {
+                showError(container, 'حدث خطأ في تحميل التسويات');
+                return;
+            }
+
+            currentSettlements = result.data?.data?.settlements || [];
+            const pagination = result.data?.data?.pagination || {};
+            const summary = result.data?.data?.summary || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">ادارة التسويات</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || 0} تسوية</p>
+                    </div>
+                    <button onclick="exportSettlements()" class="btn btn-secondary">📥 تصدير Excel</button>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="grid-4" style="margin-bottom: 1.5rem;">
+                    <div class="stat-card stat-card-amber">
+                        <div class="stat-icon">⏳</div>
+                        <div class="stat-label">بانتظار الموافقة</div>
+                        <div class="stat-value">${summary.pending_count || 0}</div>
+                    </div>
+                    <div class="stat-card stat-card-teal">
+                        <div class="stat-icon">✅</div>
+                        <div class="stat-label">معتمدة</div>
+                        <div class="stat-value">${summary.approved_count || 0}</div>
+                    </div>
+                    <div class="stat-card stat-card-emerald">
+                        <div class="stat-icon">💸</div>
+                        <div class="stat-label">محولة</div>
+                        <div class="stat-value">${summary.transferred_count || 0}</div>
+                    </div>
+                    <div class="stat-card stat-card-sky">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-label">اجمالي المبالغ</div>
+                        <div class="stat-value">${formatCurrency(summary.total_amount || 0)}</div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="min-width: 200px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">التاجر</label>
+                            <input type="text" id="merchantSearch" placeholder="اسم التاجر..." class="form-control" value="${filters.merchant_search || ''}" onkeyup="if(event.key === 'Enter') applyFilters()">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الحالة</label>
+                            <select id="statusFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="pending" ${filters.status === 'pending' ? 'selected' : ''}>بانتظار الموافقة</option>
+                                <option value="approved" ${filters.status === 'approved' ? 'selected' : ''}>معتمدة</option>
+                                <option value="transferred" ${filters.status === 'transferred' ? 'selected' : ''}>محولة</option>
+                                <option value="rejected" ${filters.status === 'rejected' ? 'selected' : ''}>مرفوضة</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">من تاريخ</label>
+                            <input type="date" id="fromDate" class="form-control" value="${filters.from_date || ''}">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الى تاريخ</label>
+                            <input type="date" id="toDate" class="form-control" value="${filters.to_date || ''}">
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">بحث</button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">مسح</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>رقم المرجع</th>
+                                    <th>التاجر</th>
+                                    <th>الفترة</th>
+                                    <th>الاجمالي</th>
+                                    <th>العمولة</th>
+                                    <th>الصافي</th>
+                                    <th>الحالة</th>
+                                    <th>الاجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentSettlements.map(s => `
+                                    <tr style="${s.status === 'pending' ? 'background: var(--amber-50);' : ''}">
+                                        <td style="font-family: monospace; font-weight: 600;">${s.reference_number || '-'}</td>
+                                        <td>${s.merchant?.name_ar || '-'}</td>
+                                        <td>${formatDate(s.period_start)} - ${formatDate(s.period_end)}</td>
+                                        <td>${formatCurrency(s.gross_amount)}</td>
+                                        <td style="color: var(--rose-600);">-${formatCurrency(s.commission_amount)}</td>
+                                        <td style="font-weight: 600; color: var(--teal-600);">${formatCurrency(s.net_amount)}</td>
+                                        <td><span class="badge ${getSettlementStatusBadgeClass(s.status)}">${getSettlementStatusLabel(s.status)}</span></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem;">
+                                                <button onclick="viewSettlement('${s.id}')" class="btn btn-sm btn-secondary" title="عرض">👁️</button>
+                                                ${s.status === 'pending' ? `
+                                                    <button onclick="approveSettlement('${s.id}')" class="btn btn-sm btn-primary" title="موافقة">✅</button>
+                                                    <button onclick="rejectSettlement('${s.id}')" class="btn btn-sm" style="background: var(--rose-500); color: white;" title="رفض">❌</button>
+                                                ` : ''}
+                                                ${s.status === 'approved' ? `
+                                                    <button onclick="openTransferModal('${s.id}')" class="btn btn-sm" style="background: var(--emerald-500); color: white;" title="تأكيد التحويل">💸</button>
+                                                ` : ''}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${currentSettlements.length === 0 ? '<tr><td colspan="8" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا توجد نتائج</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `<button onclick="loadSettlements(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">السابق</button>` : ''}
+                            <span style="padding: 0.5rem 1rem; color: var(--gray-600);">صفحة ${currentPage} من ${pagination.pages}</span>
+                            ${currentPage < pagination.pages ? `<button onclick="loadSettlements(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">التالي</button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ');
+        }
+    }
+
+    function applyFilters() {
+        const filters = {
+            merchant_search: document.getElementById('merchantSearch')?.value || '',
+            status: document.getElementById('statusFilter')?.value || '',
+            from_date: document.getElementById('fromDate')?.value || '',
+            to_date: document.getElementById('toDate')?.value || ''
+        };
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadSettlements(1, filters);
+    }
+
+    function clearFilters() { loadSettlements(1, {}); }
+
+    async function viewSettlement(id) {
+        const modal = document.getElementById('settlementModal');
+        const modalBody = document.getElementById('modalBody');
+        modal.style.display = 'flex';
+        modalBody.innerHTML = '<div class="loading-container"><div class="spinner"></div></div>';
+
+        try {
+            const result = await API.admin.getSettlement(id);
+            const s = result.data?.data || {};
+            const transactions = s.transactions || [];
+            document.getElementById('modalTitle').textContent = `تسوية #${s.reference_number || ''}`;
+
+            modalBody.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">رقم المرجع</label><div style="font-family: monospace;">${s.reference_number || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الحالة</label><div><span class="badge ${getSettlementStatusBadgeClass(s.status)}">${getSettlementStatusLabel(s.status)}</span></div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">التاجر</label><div>${s.merchant?.name_ar || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">فترة التسوية</label><div>${formatDate(s.period_start)} - ${formatDate(s.period_end)}</div></div>
+                </div>
+
+                <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                <h4 style="margin-bottom: 1rem;">ملخص التسوية</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; text-align: center;">
+                    <div style="background: var(--gray-50); padding: 1rem; border-radius: 0.5rem;">
+                        <div style="color: var(--gray-500); font-size: 0.75rem;">الاجمالي</div>
+                        <div style="font-size: 1.25rem; font-weight: 700;">${formatCurrency(s.gross_amount)}</div>
+                    </div>
+                    <div style="background: var(--rose-50); padding: 1rem; border-radius: 0.5rem;">
+                        <div style="color: var(--gray-500); font-size: 0.75rem;">العمولة (${s.commission_rate || 0}%)</div>
+                        <div style="font-size: 1.25rem; font-weight: 700; color: var(--rose-600);">-${formatCurrency(s.commission_amount)}</div>
+                    </div>
+                    <div style="background: var(--emerald-50); padding: 1rem; border-radius: 0.5rem;">
+                        <div style="color: var(--gray-500); font-size: 0.75rem;">الصافي</div>
+                        <div style="font-size: 1.25rem; font-weight: 700; color: var(--emerald-600);">${formatCurrency(s.net_amount)}</div>
+                    </div>
+                </div>
+
+                ${s.transfer_reference ? `
+                    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 1rem;">بيانات التحويل</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">مرجع التحويل</label><div style="font-family: monospace;">${s.transfer_reference}</div></div>
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">تاريخ التحويل</label><div>${formatDateTime(s.transferred_at)}</div></div>
+                    </div>
+                ` : ''}
+
+                ${transactions.length > 0 ? `
+                    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 1rem;">المعاملات المشمولة (${transactions.length})</h4>
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        <table class="table" style="font-size: 0.75rem;">
+                            <thead><tr><th>المرجع</th><th>العميل</th><th>المبلغ</th></tr></thead>
+                            <tbody>
+                                ${transactions.map(t => `
+                                    <tr>
+                                        <td style="font-family: monospace;">${t.reference_number || '-'}</td>
+                                        <td>${t.customer?.bariq_id || '-'}</td>
+                                        <td>${formatCurrency(t.total_amount)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                ` : ''}
+
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button onclick="closeModal()" class="btn btn-secondary">اغلاق</button>
+                    ${s.status === 'pending' ? `
+                        <button onclick="closeModal(); approveSettlement('${s.id}')" class="btn btn-primary">موافقة</button>
+                    ` : ''}
+                    ${s.status === 'approved' ? `
+                        <button onclick="closeModal(); openTransferModal('${s.id}')" class="btn" style="background: var(--emerald-500); color: white;">تأكيد التحويل</button>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) {
+            modalBody.innerHTML = '<div class="alert alert-error">حدث خطأ</div>';
+        }
+    }
+
+    function closeModal() { document.getElementById('settlementModal').style.display = 'none'; }
+
+    async function approveSettlement(id) {
+        if (!confirm('هل أنت متأكد من الموافقة على هذه التسوية؟')) return;
+
+        try {
+            const result = await API.admin.approveSettlement(id);
+            if (result.success) {
+                alert('تمت الموافقة بنجاح');
+                loadSettlements(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ في الموافقة');
+        }
+    }
+
+    async function rejectSettlement(id) {
+        const reason = prompt('سبب الرفض:');
+        if (!reason) return;
+
+        try {
+            const result = await API.admin.rejectSettlement(id, reason);
+            if (result.success) {
+                alert('تم الرفض');
+                loadSettlements(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ');
+        }
+    }
+
+    function openTransferModal(settlementId) {
+        selectedSettlement = currentSettlements.find(s => s.id === settlementId);
+        if (!selectedSettlement) return;
+
+        document.getElementById('transferSettlementRef').value = selectedSettlement.reference_number;
+        document.getElementById('transferMerchant').value = selectedSettlement.merchant?.name_ar || '';
+        document.getElementById('transferAmount').value = formatCurrency(selectedSettlement.net_amount);
+        document.getElementById('transferReference').value = '';
+        document.getElementById('transferModal').style.display = 'flex';
+    }
+
+    function closeTransferModal() {
+        document.getElementById('transferModal').style.display = 'none';
+        selectedSettlement = null;
+    }
+
+    async function confirmTransfer() {
+        if (!selectedSettlement) return;
+
+        const transferReference = document.getElementById('transferReference').value.trim();
+        if (!transferReference) { alert('الرجاء ادخال رقم مرجع التحويل'); return; }
+
+        try {
+            const result = await API.admin.transferSettlement(selectedSettlement.id, transferReference);
+            if (result.success) {
+                alert('تم تأكيد التحويل بنجاح');
+                closeTransferModal();
+                loadSettlements(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ في تأكيد التحويل');
+        }
+    }
+
+    function getSettlementStatusLabel(status) {
+        const labels = { 'pending': 'بانتظار الموافقة', 'approved': 'معتمدة', 'transferred': 'محولة', 'rejected': 'مرفوضة' };
+        return labels[status] || status;
+    }
+
+    function getSettlementStatusBadgeClass(status) {
+        const classes = { 'pending': 'badge-warning', 'approved': 'badge-info', 'transferred': 'badge-success', 'rejected': 'badge-danger' };
+        return classes[status] || 'badge-gray';
+    }
+
+    function exportSettlements() {
+        if (currentSettlements.length === 0) { alert('لا توجد بيانات'); return; }
+        const data = currentSettlements.map(s => ({
+            'رقم المرجع': s.reference_number, 'التاجر': s.merchant?.name_ar,
+            'الفترة من': s.period_start, 'الفترة الى': s.period_end,
+            'الاجمالي': s.gross_amount, 'العمولة': s.commission_amount, 'الصافي': s.net_amount,
+            'الحالة': getSettlementStatusLabel(s.status)
+        }));
+        exportToExcel(data, 'settlements');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadSettlements());
+</script>
+{% endblock %}

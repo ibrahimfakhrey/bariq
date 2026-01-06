@@ -62,16 +62,25 @@ async function apiRequest(endpoint, options = {}) {
     const response = await fetch(url, config);
     const data = await response.json();
     
-    // Handle 401 - try to refresh token
-    if (response.status === 401 && !options._retry) {
+    // Handle 401 - try to refresh token (skip for login endpoints)
+    const isLoginEndpoint = endpoint.includes('/login');
+    if (response.status === 401 && !options._retry && !isLoginEndpoint) {
       const refreshed = await refreshToken();
       if (refreshed) {
         options._retry = true;
         return apiRequest(endpoint, options);
       } else {
         // Refresh failed, logout
+        const userType = TokenManager.getUserType();
         TokenManager.clear();
-        window.location.href = '/login';
+        // Redirect based on user type
+        if (userType === 'admin') {
+          window.location.href = '/panel/login';
+        } else if (userType === 'merchant') {
+          window.location.href = '/merchant/login';
+        } else {
+          window.location.href = '/login';
+        }
         return null;
       }
     }
@@ -274,6 +283,143 @@ const API = {
       const query = new URLSearchParams(params).toString();
       return apiRequest(`/merchants/me/reports/customers${query ? '?' + query : ''}`);
     },
+  },
+
+  // Admin
+  admin: {
+    // Dashboard
+    getDashboard: () => apiRequest('/admin/dashboard'),
+
+    // Customers
+    getCustomers: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/customers${query ? '?' + query : ''}`);
+    },
+    getCustomer: (id) => apiRequest(`/admin/customers/${id}`),
+    updateCustomer: (id, data) =>
+      apiRequest(`/admin/customers/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    updateCustomerCredit: (id, creditLimit, reason) =>
+      apiRequest(`/admin/customers/${id}/credit-limit`, {
+        method: 'PUT',
+        body: JSON.stringify({ credit_limit: creditLimit, reason }),
+      }),
+    adjustCustomerCredit: (id, amount, reason, notes) =>
+      apiRequest(`/admin/customers/${id}/adjust-credit`, {
+        method: 'POST',
+        body: JSON.stringify({ amount, reason, notes }),
+      }),
+
+    // Credit Requests
+    getCreditRequests: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/credit-requests${query ? '?' + query : ''}`);
+    },
+    approveCreditRequest: (id, approvedLimit, reason) =>
+      apiRequest(`/admin/credit-requests/${id}/approve`, {
+        method: 'PUT',
+        body: JSON.stringify({ approved_limit: approvedLimit, reason }),
+      }),
+    rejectCreditRequest: (id, reason) =>
+      apiRequest(`/admin/credit-requests/${id}/reject`, {
+        method: 'PUT',
+        body: JSON.stringify({ reason }),
+      }),
+
+    // Merchants
+    getMerchants: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/merchants${query ? '?' + query : ''}`);
+    },
+    getMerchant: (id) => apiRequest(`/admin/merchants/${id}`),
+    updateMerchant: (id, data) =>
+      apiRequest(`/admin/merchants/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    approveMerchant: (id, commissionRate) =>
+      apiRequest(`/admin/merchants/${id}/approve`, {
+        method: 'PUT',
+        body: JSON.stringify({ commission_rate: commissionRate }),
+      }),
+    suspendMerchant: (id, reason) =>
+      apiRequest(`/admin/merchants/${id}/suspend`, {
+        method: 'PUT',
+        body: JSON.stringify({ reason }),
+      }),
+
+    // Transactions
+    getTransactions: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/transactions${query ? '?' + query : ''}`);
+    },
+    getOverdueTransactions: () => apiRequest('/admin/transactions/overdue'),
+
+    // Payments
+    getPayments: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/payments${query ? '?' + query : ''}`);
+    },
+    getPayment: (id) => apiRequest(`/admin/payments/${id}`),
+    refundPayment: (id, amount, reason) =>
+      apiRequest(`/admin/payments/${id}/refund`, {
+        method: 'POST',
+        body: JSON.stringify({ amount, reason }),
+      }),
+    queryPaymentStatus: (tranRef) => apiRequest(`/admin/payments/query/${tranRef}`),
+
+    // Settlements
+    getSettlements: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/settlements${query ? '?' + query : ''}`);
+    },
+    getSettlement: (id) => apiRequest(`/admin/settlements/${id}`),
+    approveSettlement: (id) =>
+      apiRequest(`/admin/settlements/${id}/approve`, { method: 'PUT' }),
+    transferSettlement: (id, transferReference) =>
+      apiRequest(`/admin/settlements/${id}/transfer`, {
+        method: 'PUT',
+        body: JSON.stringify({ transfer_reference: transferReference }),
+      }),
+
+    // Admin Staff
+    getStaff: () => apiRequest('/admin/staff'),
+    createStaff: (data) =>
+      apiRequest('/admin/staff', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateStaff: (id, data) =>
+      apiRequest(`/admin/staff/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+
+    // Reports
+    getOverviewReport: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/reports/overview${query ? '?' + query : ''}`);
+    },
+    getFinancialReport: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/reports/financial${query ? '?' + query : ''}`);
+    },
+
+    // Audit Logs
+    getAuditLogs: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return apiRequest(`/admin/audit-logs${query ? '?' + query : ''}`);
+    },
+
+    // Settings
+    getSettings: () => apiRequest('/admin/settings'),
+    updateSetting: (key, value) =>
+      apiRequest(`/admin/settings/${key}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      }),
   },
 };
 

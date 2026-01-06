@@ -5,6 +5,11 @@ from datetime import datetime
 from app.extensions import db
 from app.models.notification import Notification
 from app.models.device import CustomerDevice, MerchantUserDevice
+from app.utils.realtime import (
+    emit_to_customer,
+    emit_to_staff,
+    build_notification_event_data
+)
 
 
 class NotificationService:
@@ -117,6 +122,9 @@ class NotificationService:
 
             db.session.add(notification)
             db.session.commit()
+
+            # Emit real-time notification to customer
+            emit_to_customer(customer_id, 'notification_new', build_notification_event_data(notification))
 
             return {
                 'success': True,
@@ -447,6 +455,9 @@ class NotificationService:
 
             db.session.add(notification)
             db.session.commit()
+
+            # Emit real-time notification to staff
+            emit_to_staff(staff_id, 'notification_new', build_notification_event_data(notification))
 
             return {
                 'success': True,

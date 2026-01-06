@@ -9,6 +9,15 @@ from app.models.region import Region
 from app.models.branch import Branch
 from app.models.merchant_user import MerchantUser
 from app.models.transaction import Transaction
+from app.utils.role_access import (
+    get_merchant_user,
+    validate_branch_access,
+    validate_region_access,
+    validate_staff_management,
+    validate_staff_view,
+    filter_staff_by_role,
+    can_view_reports
+)
 
 
 class MerchantService:
@@ -168,8 +177,8 @@ class MerchantService:
     # ==================== Regions ====================
 
     @staticmethod
-    def get_regions(merchant_id):
-        """Get all regions for a merchant"""
+    def get_regions(merchant_id, staff_id=None):
+        """Get regions for a merchant with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -179,7 +188,37 @@ class MerchantService:
                 'error_code': 'MERCH_001'
             }
 
-        regions = Region.query.filter_by(merchant_id=merchant_id).order_by(Region.name_ar).all()
+        query = Region.query.filter_by(merchant_id=merchant_id)
+
+        # Apply role-based filtering if staff_id is provided
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers cannot view regions
+                if user.role == 'cashier':
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to view regions',
+                        'error_code': 'AUTH_003'
+                    }
+                # Non-top-level users can only see their accessible regions
+                if not user.can_see_all_regions():
+                    accessible_region_ids = user.get_accessible_region_ids()
+                    if accessible_region_ids:
+                        query = query.filter(Region.id.in_(accessible_region_ids))
+                    else:
+                        return {
+                            'success': True,
+                            'data': {'regions': []}
+                        }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+
+        regions = query.order_by(Region.name_ar).all()
 
         regions_data = []
         for region in regions:
@@ -341,8 +380,8 @@ class MerchantService:
     # ==================== Branches ====================
 
     @staticmethod
-    def get_branches(merchant_id, region_id=None, is_active=None):
-        """Get branches for a merchant"""
+    def get_branches(merchant_id, staff_id=None, region_id=None, is_active=None):
+        """Get branches for a merchant with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -354,7 +393,37 @@ class MerchantService:
 
         query = Branch.query.filter_by(merchant_id=merchant_id)
 
-        if region_id:
+        # Apply role-based filtering if staff_id is provided
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Non-top-level users can only see their accessible branches
+                if not user.can_see_all_branches():
+                    accessible_branch_ids = user.get_accessible_branch_ids()
+                    if accessible_branch_ids:
+                        query = query.filter(Branch.id.in_(accessible_branch_ids))
+                    else:
+                        return {
+                            'success': True,
+                            'data': {'branches': []}
+                        }
+
+                # If region_id is specified, validate access
+                if region_id:
+                    if not validate_region_access(user, region_id):
+                        return {
+                            'success': False,
+                            'message': 'Access denied to this region',
+                            'error_code': 'AUTH_003'
+                        }
+                    query = query.filter_by(region_id=region_id)
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+        elif region_id:
             query = query.filter_by(region_id=region_id)
 
         if is_active is not None:
@@ -551,8 +620,8 @@ class MerchantService:
     # ==================== Staff ====================
 
     @staticmethod
-    def get_staff(merchant_id, role=None, branch_id=None, page=1, per_page=20):
-        """Get staff members for a merchant"""
+    def get_staff(merchant_id, requester_id=None, role=None, branch_id=None, page=1, per_page=20):
+        """Get staff members for a merchant with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -564,11 +633,40 @@ class MerchantService:
 
         query = MerchantUser.query.filter_by(merchant_id=merchant_id)
 
+        # Apply role-based filtering if requester_id is provided
+        if requester_id:
+            requester = get_merchant_user(requester_id)
+            if requester:
+                # Cashiers cannot view staff
+                if requester.role == 'cashier':
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to view staff',
+                        'error_code': 'AUTH_003'
+                    }
+                # Apply role-based filtering
+                query = filter_staff_by_role(query, requester)
+
+                # If branch_id is specified, validate access
+                if branch_id:
+                    if not validate_branch_access(requester, branch_id):
+                        return {
+                            'success': False,
+                            'message': 'Access denied to this branch',
+                            'error_code': 'AUTH_003'
+                        }
+                    query = query.filter_by(branch_id=branch_id)
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+        elif branch_id:
+            query = query.filter_by(branch_id=branch_id)
+
         if role:
             query = query.filter_by(role=role)
-
-        if branch_id:
-            query = query.filter_by(branch_id=branch_id)
 
         pagination = query.order_by(MerchantUser.created_at.desc()).paginate(
             page=page, per_page=per_page, error_out=False
@@ -686,8 +784,8 @@ class MerchantService:
             }
 
     @staticmethod
-    def get_staff_member(merchant_id, staff_id):
-        """Get a single staff member's details"""
+    def get_staff_member(merchant_id, staff_id, requester_id=None):
+        """Get a single staff member's details with role-based access"""
         user = MerchantUser.query.filter_by(id=staff_id, merchant_id=merchant_id).first()
 
         if not user:
@@ -696,6 +794,24 @@ class MerchantService:
                 'message': 'Staff member not found',
                 'error_code': 'MERCH_006'
             }
+
+        # Role-based access validation
+        if requester_id:
+            requester = get_merchant_user(requester_id)
+            if requester:
+                # Validate requester can view this staff member
+                if not validate_staff_view(requester, user):
+                    return {
+                        'success': False,
+                        'message': 'Access denied: Cannot view this staff member',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Requester not found',
+                    'error_code': 'MERCH_006'
+                }
 
         user_dict = user.to_dict()
         user_dict['branch'] = user.branch.to_dict() if user.branch else None
@@ -709,8 +825,8 @@ class MerchantService:
         }
 
     @staticmethod
-    def update_staff(merchant_id, staff_id, data):
-        """Update a staff member"""
+    def update_staff(merchant_id, staff_id, data, requester_id=None):
+        """Update a staff member with role-based access control"""
         user = MerchantUser.query.filter_by(id=staff_id, merchant_id=merchant_id).first()
 
         if not user:
@@ -719,6 +835,24 @@ class MerchantService:
                 'message': 'Staff member not found',
                 'error_code': 'MERCH_006'
             }
+
+        # Role-based access validation
+        if requester_id:
+            requester = get_merchant_user(requester_id)
+            if requester:
+                # Validate requester can manage this staff member
+                if not validate_staff_management(requester, user):
+                    return {
+                        'success': False,
+                        'message': 'Access denied: Cannot manage this staff member',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Requester not found',
+                    'error_code': 'MERCH_006'
+                }
 
         # Validate branch if changing
         if 'branch_id' in data and data['branch_id']:
@@ -791,8 +925,8 @@ class MerchantService:
             }
 
     @staticmethod
-    def delete_staff(merchant_id, staff_id):
-        """Delete (deactivate) a staff member"""
+    def delete_staff(merchant_id, staff_id, requester_id=None):
+        """Delete (deactivate) a staff member with role-based access control"""
         user = MerchantUser.query.filter_by(id=staff_id, merchant_id=merchant_id).first()
 
         if not user:
@@ -801,6 +935,24 @@ class MerchantService:
                 'message': 'Staff member not found',
                 'error_code': 'MERCH_006'
             }
+
+        # Role-based access validation
+        if requester_id:
+            requester = get_merchant_user(requester_id)
+            if requester:
+                # Validate requester can manage this staff member
+                if not validate_staff_management(requester, user):
+                    return {
+                        'success': False,
+                        'message': 'Access denied: Cannot delete this staff member',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Requester not found',
+                    'error_code': 'MERCH_006'
+                }
 
         # Cannot delete owner
         if user.role == 'owner':

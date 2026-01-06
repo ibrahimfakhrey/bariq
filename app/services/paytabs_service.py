@@ -39,7 +39,7 @@ class PayTabsService:
             'server_key': config.get('PAYTABS_SERVER_KEY'),
             'client_key': config.get('PAYTABS_CLIENT_KEY'),
             'currency': config.get('PAYTABS_CURRENCY', 'SAR'),
-            'region': config.get('PAYTABS_REGION', 'egypt'),
+            'region': config.get('PAYTABS_REGION', 'saudi'),  # Default to Saudi Arabia
             'sandbox': config.get('PAYTABS_SANDBOX', True),
             'return_url': config.get('PAYMENT_RETURN_URL'),
             'callback_url': config.get('PAYMENT_CALLBACK_URL'),
@@ -54,12 +54,12 @@ class PayTabsService:
         region = config['region'].lower()
 
         region_urls = {
-            'egypt': 'https://secure-egypt.paytabs.com',
             'saudi': 'https://secure.paytabs.sa',
+            'egypt': 'https://secure-egypt.paytabs.com',
             'uae': 'https://secure.paytabs.com',
             'global': 'https://secure-global.paytabs.com'
         }
-        return region_urls.get(region, region_urls['egypt'])
+        return region_urls.get(region, region_urls['saudi'])
 
     @staticmethod
     def get_headers():
@@ -258,12 +258,13 @@ class PayTabsService:
     # ==================== Webhook Handler ====================
 
     @staticmethod
-    def handle_webhook(payload):
+    def handle_webhook(payload, verify_amount=True):
         """
         Handle PayTabs webhook callback
 
         Args:
             payload: Webhook payload from PayTabs
+            verify_amount: If True, verify cart_amount matches expected payment amount
 
         Returns:
             dict with processing result
@@ -284,8 +285,8 @@ class PayTabsService:
             transaction_ids_str = payload.get('user_defined', {}).get('udf2', '')
             original_amount = payload.get('user_defined', {}).get('udf3')
 
-            # Find the pending payment
-            payment = Payment.query.filter_by(gateway_reference=tran_ref).first()
+            # Find the pending payment with row-level lock (FOR UPDATE)
+            payment = Payment.query.filter_by(gateway_reference=tran_ref).with_for_update().first()
 
             if not payment:
                 return {
@@ -294,13 +295,34 @@ class PayTabsService:
                     'error_code': 'PAY_006'
                 }
 
-            # Already processed
+            # Already processed (idempotency check)
             if payment.status in ['completed', 'failed', 'declined']:
                 return {
                     'success': True,
                     'message': 'Payment already processed',
                     'data': {'status': payment.status}
                 }
+
+            # === SECURITY: Concurrent Processing Lock ===
+            if not payment.acquire_lock():
+                return {
+                    'success': False,
+                    'message': 'Payment is currently being processed',
+                    'error_code': 'PAY_012'
+                }
+            db.session.flush()  # Persist lock immediately
+
+            # === SECURITY: Amount Verification ===
+            if verify_amount:
+                expected_amount = float(payment.amount)
+                # Allow small tolerance for floating point comparison (0.01)
+                amount_tolerance = 0.01
+                if abs(cart_amount - expected_amount) > amount_tolerance:
+                    return {
+                        'success': False,
+                        'message': f'Amount mismatch: expected {expected_amount}, received {cart_amount}',
+                        'error_code': 'PAY_011'
+                    }
 
             # Map status
             internal_status = PayTabsService.STATUS_MAPPING.get(response_status, 'failed')
@@ -317,7 +339,7 @@ class PayTabsService:
                 # Process the actual payment - update transactions
                 result = PayTabsService._process_successful_payment(
                     payment=payment,
-                    customer_id=int(customer_id) if customer_id else payment.customer_id,
+                    customer_id=customer_id if customer_id else payment.customer_id,
                     transaction_ids_str=transaction_ids_str,
                     amount=cart_amount
                 )
@@ -325,6 +347,7 @@ class PayTabsService:
                 if not result['success']:
                     # Rollback payment status if transaction update fails
                     payment.status = 'pending'
+                    payment.release_lock()
                     payment.gateway_response = json.dumps({
                         **payload,
                         'processing_error': result['message']
@@ -332,6 +355,8 @@ class PayTabsService:
                     db.session.commit()
                     return result
 
+            # Release lock after successful processing
+            payment.release_lock()
             db.session.commit()
 
             return {
@@ -369,8 +394,8 @@ class PayTabsService:
                     'error_code': 'CUST_001'
                 }
 
-            # Parse transaction IDs
-            transaction_ids = [int(tid) for tid in transaction_ids_str.split(',') if tid]
+            # Parse transaction IDs (UUIDs are strings, not ints)
+            transaction_ids = [tid.strip() for tid in transaction_ids_str.split(',') if tid.strip()]
 
             if not transaction_ids:
                 transaction_ids = [payment.transaction_id]

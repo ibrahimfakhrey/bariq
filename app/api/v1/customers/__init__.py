@@ -3,8 +3,23 @@ Customer Routes
 """
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, current_user
+from app.extensions import limiter
 
 customers_bp = Blueprint('customers', __name__)
+
+# Rate limit key function for customer-based limiting
+def get_customer_id():
+    """Get current customer ID for rate limiting"""
+    try:
+        from flask_jwt_extended import get_jwt_identity
+        identity = get_jwt_identity()
+        if identity:
+            import json
+            user_data = json.loads(identity)
+            return user_data.get('id', 'anonymous')
+    except:
+        pass
+    return 'anonymous'
 
 
 # ==================== Profile ====================
@@ -424,6 +439,8 @@ def unregister_device(device_id):
 # ==================== PayTabs Payment Gateway ====================
 
 @customers_bp.route('/me/payments/initiate', methods=['POST'])
+@limiter.limit("10 per minute", key_func=get_customer_id)  # Prevent payment spam
+@limiter.limit("50 per hour", key_func=get_customer_id)    # Hourly cap
 @jwt_required()
 def initiate_payment():
     """
@@ -437,6 +454,10 @@ def initiate_payment():
     }
 
     Returns payment page URL for redirect
+
+    Rate limits:
+    - 10 requests per minute per customer
+    - 50 requests per hour per customer
     """
     from app.services.paytabs_service import PayTabsService
 
@@ -560,3 +581,128 @@ def get_payment_methods():
 
     result = PayTabsService.get_available_payment_methods()
     return jsonify(result)
+
+
+@customers_bp.route('/me/payments/<payment_id>/verify', methods=['POST'])
+@jwt_required()
+def verify_payment(payment_id):
+    """
+    Manually verify and complete a pending payment by querying PayTabs.
+
+    Use this endpoint after returning from PayTabs payment page to ensure
+    payment status is updated (useful when webhooks are not received).
+    """
+    from app.services.paytabs_service import PayTabsService
+    from app.models.payment import Payment
+
+    identity = current_user
+
+    # Find the payment
+    payment = Payment.query.filter_by(
+        id=payment_id,
+        customer_id=identity['id']
+    ).first()
+
+    if not payment:
+        return jsonify({
+            'success': False,
+            'message': 'Payment not found',
+            'error_code': 'PAY_006'
+        }), 404
+
+    # If already completed, return success
+    if payment.status == 'completed':
+        return jsonify({
+            'success': True,
+            'message': 'Payment already completed',
+            'data': {
+                'payment_id': payment.id,
+                'status': payment.status,
+                'amount': float(payment.amount)
+            }
+        })
+
+    # If no gateway reference, can't verify
+    if not payment.gateway_reference:
+        return jsonify({
+            'success': False,
+            'message': 'No gateway reference to verify',
+            'error_code': 'PAY_007'
+        }), 400
+
+    # Query PayTabs for the actual status
+    query_result = PayTabsService.query_payment_status(payment.gateway_reference)
+
+    if not query_result['success']:
+        # PayTabs query failed - provide helpful message
+        return jsonify({
+            'success': False,
+            'message': 'لا يمكن التحقق من حالة الدفع حالياً. يرجى المحاولة لاحقاً أو الاتصال بالدعم.',
+            'error_code': 'PAY_007',
+            'details': query_result.get('message', 'Gateway query failed')
+        }), 400
+
+    gateway_status = query_result['data'].get('gateway_status', '')
+
+    # If PayTabs says it's authorized, process the payment
+    if gateway_status == 'A':  # Authorized/Approved
+        # Build a webhook-like payload and process it
+        import json
+        gateway_response = json.loads(payment.gateway_response) if payment.gateway_response else {}
+
+        webhook_payload = {
+            'tran_ref': payment.gateway_reference,
+            'cart_amount': float(payment.amount),
+            'cart_currency': 'SAR',
+            'payment_result': {
+                'response_status': 'A',
+                'response_code': '000',
+                'response_message': 'Authorised'
+            },
+            'payment_info': {
+                'payment_method': query_result['data'].get('payment_method', 'card')
+            },
+            'user_defined': {
+                'udf1': identity['id'],
+                'udf2': ','.join([str(tid) for tid in gateway_response.get('transaction_ids', [payment.transaction_id])]),
+                'udf3': str(payment.amount)
+            }
+        }
+
+        result = PayTabsService.handle_webhook(webhook_payload, verify_amount=False)
+
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': 'Payment verified and completed successfully',
+                'data': result.get('data', {})
+            })
+        else:
+            return jsonify(result), 400
+
+    elif gateway_status in ['D', 'E']:  # Declined or Error
+        payment.status = 'failed'
+        from app.extensions import db
+        db.session.commit()
+
+        return jsonify({
+            'success': False,
+            'message': 'Payment was declined or failed',
+            'error_code': 'PAY_001',
+            'data': {
+                'status': 'failed',
+                'gateway_message': query_result['data'].get('response_message')
+            }
+        }), 400
+
+    else:
+        # Still pending or other status
+        return jsonify({
+            'success': True,
+            'message': 'Payment is still being processed',
+            'data': {
+                'payment_id': payment.id,
+                'status': payment.status,
+                'gateway_status': gateway_status
+            }
+        })

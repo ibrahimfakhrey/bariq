@@ -3,6 +3,7 @@ Payment Model
 """
 from app.extensions import db
 from app.models.mixins import TimestampMixin, generate_reference
+from datetime import datetime, timedelta
 import uuid
 
 
@@ -10,6 +11,9 @@ class Payment(db.Model, TimestampMixin):
     """Payment model"""
 
     __tablename__ = 'payments'
+
+    # Lock timeout in seconds (prevent stale locks)
+    LOCK_TIMEOUT_SECONDS = 60
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     reference_number = db.Column(db.String(20), unique=True, nullable=False, index=True)
@@ -28,6 +32,9 @@ class Payment(db.Model, TimestampMixin):
     gateway_response = db.Column(db.Text, nullable=True)  # Full gateway response JSON
     refunded_amount = db.Column(db.Numeric(10, 2), default=0)
 
+    # Concurrent processing lock
+    processing_locked_at = db.Column(db.DateTime, nullable=True)  # Lock timestamp for concurrent protection
+
     # Relationships
     transaction = db.relationship('Transaction', back_populates='payments')
     customer = db.relationship('Customer', back_populates='payments')
@@ -36,6 +43,28 @@ class Payment(db.Model, TimestampMixin):
         super().__init__(**kwargs)
         if not self.reference_number:
             self.reference_number = generate_reference('PAY')
+
+    def is_locked(self):
+        """Check if payment is currently locked for processing"""
+        if not self.processing_locked_at:
+            return False
+        # Check if lock has expired
+        lock_expiry = self.processing_locked_at + timedelta(seconds=self.LOCK_TIMEOUT_SECONDS)
+        return datetime.utcnow() < lock_expiry
+
+    def acquire_lock(self):
+        """
+        Try to acquire processing lock.
+        Returns True if lock acquired, False if already locked.
+        """
+        if self.is_locked():
+            return False
+        self.processing_locked_at = datetime.utcnow()
+        return True
+
+    def release_lock(self):
+        """Release processing lock"""
+        self.processing_locked_at = None
 
     def to_dict(self):
         return {

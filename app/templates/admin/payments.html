@@ -1,0 +1,361 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}ادارة المدفوعات{% endblock %}
+
+{% block page_content %}
+<div id="payments-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<!-- Payment Detail Modal -->
+<div id="paymentModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3 id="modalTitle">تفاصيل الدفعة</h3>
+            <button onclick="closeModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+    </div>
+</div>
+
+<!-- Refund Modal -->
+<div id="refundModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>استرداد المبلغ</h3>
+            <button onclick="closeRefundModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>رقم الدفعة</label>
+                <input type="text" id="refundPaymentRef" class="form-control" readonly>
+            </div>
+            <div class="form-group">
+                <label>المبلغ الأصلي</label>
+                <input type="text" id="refundOriginalAmount" class="form-control" readonly>
+            </div>
+            <div class="form-group">
+                <label>مبلغ الاسترداد <span style="color: var(--rose-500);">*</span></label>
+                <input type="number" id="refundAmount" class="form-control" step="0.01" min="0.01" required>
+            </div>
+            <div class="form-group">
+                <label>سبب الاسترداد <span style="color: var(--rose-500);">*</span></label>
+                <select id="refundReason" class="form-control" required>
+                    <option value="">-- اختر السبب --</option>
+                    <option value="customer_request">طلب العميل</option>
+                    <option value="duplicate_payment">دفعة مكررة</option>
+                    <option value="transaction_cancelled">الغاء المعاملة</option>
+                    <option value="technical_error">خطأ تقني</option>
+                    <option value="fraud">احتيال</option>
+                    <option value="other">أخرى</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>ملاحظات</label>
+                <textarea id="refundNotes" class="form-control" rows="2"></textarea>
+            </div>
+            <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <button onclick="closeRefundModal()" class="btn btn-secondary">الغاء</button>
+                <button onclick="processRefund()" class="btn" style="background: var(--rose-600); color: white;">تأكيد الاسترداد</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-content { background: white; border-radius: 0.75rem; width: 90%; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--gray-200); }
+.modal-header h3 { margin: 0; font-size: 1.125rem; }
+.modal-body { padding: 1.5rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--gray-700); }
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentPayments = [];
+    let currentPage = 1;
+    let currentFilters = {};
+    let selectedPayment = null;
+
+    async function loadPayments(page = 1, filters = {}) {
+        const container = document.getElementById('payments-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 20, ...filters };
+            const result = await API.admin.getPayments(params);
+
+            if (!result.success) {
+                showError(container, 'حدث خطأ في تحميل المدفوعات');
+                return;
+            }
+
+            currentPayments = result.data?.data?.payments || [];
+            const pagination = result.data?.data?.pagination || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">ادارة المدفوعات</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || 0} دفعة</p>
+                    </div>
+                    <button onclick="exportPayments()" class="btn btn-secondary">📥 تصدير Excel</button>
+                </div>
+
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">بحث</label>
+                            <input type="text" id="searchInput" placeholder="رقم الدفعة، رقم بريق..." class="form-control" value="${filters.search || ''}" onkeyup="if(event.key === 'Enter') applyFilters()">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الحالة</label>
+                            <select id="statusFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="pending" ${filters.status === 'pending' ? 'selected' : ''}>قيد الانتظار</option>
+                                <option value="completed" ${filters.status === 'completed' ? 'selected' : ''}>مكتملة</option>
+                                <option value="failed" ${filters.status === 'failed' ? 'selected' : ''}>فاشلة</option>
+                                <option value="refunded" ${filters.status === 'refunded' ? 'selected' : ''}>مستردة</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">طريقة الدفع</label>
+                            <select id="methodFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="creditcard" ${filters.payment_method === 'creditcard' ? 'selected' : ''}>بطاقة ائتمان</option>
+                                <option value="mada" ${filters.payment_method === 'mada' ? 'selected' : ''}>مدى</option>
+                                <option value="applepay" ${filters.payment_method === 'applepay' ? 'selected' : ''}>Apple Pay</option>
+                                <option value="stcpay" ${filters.payment_method === 'stcpay' ? 'selected' : ''}>STC Pay</option>
+                            </select>
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">من تاريخ</label>
+                            <input type="date" id="fromDate" class="form-control" value="${filters.from_date || ''}">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الى تاريخ</label>
+                            <input type="date" id="toDate" class="form-control" value="${filters.to_date || ''}">
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">بحث</button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">مسح</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>رقم المرجع</th>
+                                    <th>العميل</th>
+                                    <th>المبلغ</th>
+                                    <th>طريقة الدفع</th>
+                                    <th>التاريخ</th>
+                                    <th>الحالة</th>
+                                    <th>الاجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentPayments.map(p => `
+                                    <tr>
+                                        <td style="font-family: monospace; font-weight: 600;">${p.reference_number || '-'}</td>
+                                        <td>${p.customer?.full_name_ar || p.customer?.bariq_id || '-'}</td>
+                                        <td>${formatCurrency(p.amount)}</td>
+                                        <td>${getPaymentMethodLabel(p.payment_method)}</td>
+                                        <td>${formatDateTime(p.created_at)}</td>
+                                        <td><span class="badge ${getPaymentStatusBadgeClass(p.status)}">${getPaymentStatusLabel(p.status)}</span></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem;">
+                                                <button onclick="viewPayment('${p.id}')" class="btn btn-sm btn-secondary" title="عرض">👁️</button>
+                                                ${p.status === 'completed' ? `
+                                                    <button onclick="openRefundModal('${p.id}')" class="btn btn-sm" style="background: var(--rose-500); color: white;" title="استرداد">↩️</button>
+                                                ` : ''}
+                                                ${p.gateway_reference ? `
+                                                    <button onclick="queryGateway('${p.gateway_reference}')" class="btn btn-sm btn-secondary" title="استعلام البوابة">🔍</button>
+                                                ` : ''}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${currentPayments.length === 0 ? '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا توجد نتائج</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `<button onclick="loadPayments(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">السابق</button>` : ''}
+                            <span style="padding: 0.5rem 1rem; color: var(--gray-600);">صفحة ${currentPage} من ${pagination.pages}</span>
+                            ${currentPage < pagination.pages ? `<button onclick="loadPayments(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">التالي</button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ');
+        }
+    }
+
+    function applyFilters() {
+        const filters = {
+            search: document.getElementById('searchInput')?.value || '',
+            status: document.getElementById('statusFilter')?.value || '',
+            payment_method: document.getElementById('methodFilter')?.value || '',
+            from_date: document.getElementById('fromDate')?.value || '',
+            to_date: document.getElementById('toDate')?.value || ''
+        };
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadPayments(1, filters);
+    }
+
+    function clearFilters() { loadPayments(1, {}); }
+
+    async function viewPayment(id) {
+        const modal = document.getElementById('paymentModal');
+        const modalBody = document.getElementById('modalBody');
+        modal.style.display = 'flex';
+        modalBody.innerHTML = '<div class="loading-container"><div class="spinner"></div></div>';
+
+        try {
+            const result = await API.admin.getPayment(id);
+            const p = result.data?.data || {};
+            document.getElementById('modalTitle').textContent = `دفعة #${p.reference_number || ''}`;
+
+            modalBody.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">رقم المرجع</label><div style="font-family: monospace;">${p.reference_number || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الحالة</label><div><span class="badge ${getPaymentStatusBadgeClass(p.status)}">${getPaymentStatusLabel(p.status)}</span></div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">المبلغ</label><div style="font-weight: 600; color: var(--teal-600);">${formatCurrency(p.amount)}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">طريقة الدفع</label><div>${getPaymentMethodLabel(p.payment_method)}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">العميل</label><div>${p.customer?.full_name_ar || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">رقم بريق</label><div style="font-family: monospace;">${p.customer?.bariq_id || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">تاريخ الانشاء</label><div>${formatDateTime(p.created_at)}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">تاريخ الاكتمال</label><div>${formatDateTime(p.completed_at)}</div></div>
+                </div>
+                ${p.gateway_reference ? `
+                    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 1rem;">بيانات البوابة</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">مرجع البوابة</label><div style="font-family: monospace;">${p.gateway_reference || '-'}</div></div>
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">رد البوابة</label><div>${p.gateway_response || '-'}</div></div>
+                    </div>
+                ` : ''}
+                ${p.transaction ? `
+                    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 1rem;">المعاملة المرتبطة</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">رقم المعاملة</label><div style="font-family: monospace;">${p.transaction.reference_number || '-'}</div></div>
+                        <div><label style="color: var(--gray-500); font-size: 0.75rem;">المبلغ الاجمالي</label><div>${formatCurrency(p.transaction.total_amount)}</div></div>
+                    </div>
+                ` : ''}
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button onclick="closeModal()" class="btn btn-secondary">اغلاق</button>
+                    ${p.status === 'completed' ? `<button onclick="closeModal(); openRefundModal('${p.id}')" class="btn" style="background: var(--rose-600); color: white;">استرداد</button>` : ''}
+                </div>
+            `;
+        } catch (error) {
+            modalBody.innerHTML = '<div class="alert alert-error">حدث خطأ</div>';
+        }
+    }
+
+    function closeModal() { document.getElementById('paymentModal').style.display = 'none'; }
+
+    function openRefundModal(paymentId) {
+        selectedPayment = currentPayments.find(p => p.id === paymentId);
+        if (!selectedPayment) return;
+
+        document.getElementById('refundPaymentRef').value = selectedPayment.reference_number;
+        document.getElementById('refundOriginalAmount').value = formatCurrency(selectedPayment.amount);
+        document.getElementById('refundAmount').value = selectedPayment.amount;
+        document.getElementById('refundAmount').max = selectedPayment.amount;
+        document.getElementById('refundReason').value = '';
+        document.getElementById('refundNotes').value = '';
+        document.getElementById('refundModal').style.display = 'flex';
+    }
+
+    function closeRefundModal() {
+        document.getElementById('refundModal').style.display = 'none';
+        selectedPayment = null;
+    }
+
+    async function processRefund() {
+        if (!selectedPayment) return;
+
+        const amount = parseFloat(document.getElementById('refundAmount').value);
+        const reason = document.getElementById('refundReason').value;
+        const notes = document.getElementById('refundNotes').value;
+
+        if (!amount || amount <= 0) { alert('الرجاء ادخال مبلغ صحيح'); return; }
+        if (amount > selectedPayment.amount) { alert('مبلغ الاسترداد لا يمكن أن يتجاوز المبلغ الأصلي'); return; }
+        if (!reason) { alert('الرجاء اختيار سبب الاسترداد'); return; }
+
+        if (!confirm(`هل أنت متأكد من استرداد ${formatCurrency(amount)}؟`)) return;
+
+        try {
+            const result = await API.admin.refundPayment(selectedPayment.id, amount, reason + (notes ? ': ' + notes : ''));
+            if (result.success) {
+                alert('تم الاسترداد بنجاح');
+                closeRefundModal();
+                loadPayments(currentPage, currentFilters);
+            } else {
+                alert(result.data?.message || 'حدث خطأ في الاسترداد');
+            }
+        } catch (error) {
+            alert('حدث خطأ في الاسترداد');
+        }
+    }
+
+    async function queryGateway(tranRef) {
+        try {
+            const result = await API.admin.queryPaymentStatus(tranRef);
+            if (result.success) {
+                const data = result.data?.data || {};
+                alert(`حالة البوابة: ${data.payment_status || 'غير معروف'}\nالمبلغ: ${data.cart_amount || '-'}\nالرد: ${data.payment_result?.response_message || '-'}`);
+            } else {
+                alert(result.data?.message || 'حدث خطأ في الاستعلام');
+            }
+        } catch (error) {
+            alert('حدث خطأ في الاستعلام');
+        }
+    }
+
+    function getPaymentMethodLabel(method) {
+        const labels = {
+            'creditcard': 'بطاقة ائتمان',
+            'mada': 'مدى',
+            'applepay': 'Apple Pay',
+            'stcpay': 'STC Pay',
+            'cash': 'نقدي',
+            'bank_transfer': 'تحويل بنكي'
+        };
+        return labels[method] || method || '-';
+    }
+
+    function getPaymentStatusLabel(status) {
+        const labels = { 'pending': 'قيد الانتظار', 'completed': 'مكتملة', 'failed': 'فاشلة', 'refunded': 'مستردة', 'cancelled': 'ملغية' };
+        return labels[status] || status;
+    }
+
+    function getPaymentStatusBadgeClass(status) {
+        const classes = { 'pending': 'badge-warning', 'completed': 'badge-success', 'failed': 'badge-danger', 'refunded': 'badge-info', 'cancelled': 'badge-gray' };
+        return classes[status] || 'badge-gray';
+    }
+
+    function exportPayments() {
+        if (currentPayments.length === 0) { alert('لا توجد بيانات'); return; }
+        const data = currentPayments.map(p => ({
+            'رقم المرجع': p.reference_number, 'العميل': p.customer?.full_name_ar,
+            'المبلغ': p.amount, 'طريقة الدفع': getPaymentMethodLabel(p.payment_method),
+            'التاريخ': p.created_at, 'الحالة': getPaymentStatusLabel(p.status)
+        }));
+        exportToExcel(data, 'payments');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadPayments());
+</script>
+{% endblock %}

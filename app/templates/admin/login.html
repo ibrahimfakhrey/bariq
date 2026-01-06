@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}تسجيل الدخول - لوحة الادارة{% endblock %}
+
+{% block navbar %}
+<nav class="navbar">
+    <div class="container navbar-content">
+        <a href="/panel" class="navbar-brand">
+            <div class="navbar-brand-icon">ب</div>
+            <div>
+                <div>بريق اليسر</div>
+                <div style="font-size: 0.75rem; color: var(--teal-400); font-weight: normal;">لوحة الادارة</div>
+            </div>
+        </a>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div style="min-height: 80vh; display: flex; align-items: center; justify-content: center; background: var(--gray-100); padding: 2rem;">
+    <div class="card" style="max-width: 400px; width: 100%;">
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <div style="width: 64px; height: 64px; margin: 0 auto 1rem; background: linear-gradient(135deg, var(--teal-500), var(--teal-600)); border-radius: 1rem; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 2rem; color: white;">🔐</span>
+            </div>
+            <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.5rem;">تسجيل الدخول</h1>
+            <p style="color: var(--gray-500);">لوحة التحكم والادارة</p>
+        </div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div id="errorMessage" class="alert alert-error" style="display: none;"></div>
+
+            <div class="form-group">
+                <label for="email">البريد الالكتروني</label>
+                <input type="email" id="email" class="form-control" required placeholder="admin@bariq.sa">
+            </div>
+
+            <div class="form-group">
+                <label for="password">كلمة المرور</label>
+                <input type="password" id="password" class="form-control" required placeholder="••••••••">
+            </div>
+
+            <button type="submit" id="submitBtn" class="btn btn-primary" style="width: 100%;">
+                تسجيل الدخول
+            </button>
+        </form>
+
+        <div style="margin-top: 1.5rem; text-align: center; padding-top: 1.5rem; border-top: 1px solid var(--gray-200);">
+            <a href="/" style="color: var(--gray-500); font-size: 0.875rem;">العودة للصفحة الرئيسية</a>
+        </div>
+    </div>
+</div>
+
+<style>
+.form-group { margin-bottom: 1.25rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--gray-700); }
+.form-control { width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--gray-300); border-radius: 0.5rem; font-size: 1rem; }
+.form-control:focus { outline: none; border-color: var(--teal-500); box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1); }
+.alert-error { background: var(--rose-50); color: var(--rose-700); padding: 0.75rem 1rem; border-radius: 0.5rem; margin-bottom: 1rem; border: 1px solid var(--rose-200); }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Check if already logged in
+    if (TokenManager.isAuthenticated() && TokenManager.getUserType() === 'admin') {
+        window.location.href = '/panel';
+    }
+
+    async function handleLogin(event) {
+        event.preventDefault();
+
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const submitBtn = document.getElementById('submitBtn');
+        const errorMessage = document.getElementById('errorMessage');
+
+        // Hide previous error
+        errorMessage.style.display = 'none';
+
+        // Disable button
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'جاري التحقق...';
+
+        try {
+            const result = await API.auth.adminLogin(email, password);
+
+            if (result.success && result.data?.success) {
+                // Save tokens
+                TokenManager.setTokens(
+                    result.data.data.access_token,
+                    result.data.data.refresh_token
+                );
+
+                // Save user info
+                TokenManager.setUser(result.data.data.user, 'admin');
+
+                // Redirect to dashboard
+                window.location.href = '/panel';
+            } else {
+                // Show error
+                errorMessage.textContent = result.data?.message || 'بيانات الدخول غير صحيحة';
+                errorMessage.style.display = 'block';
+            }
+        } catch (error) {
+            errorMessage.textContent = 'حدث خطأ في الاتصال';
+            errorMessage.style.display = 'block';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'تسجيل الدخول';
+        }
+    }
+</script>
+{% endblock %}

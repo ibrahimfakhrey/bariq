@@ -420,6 +420,7 @@ a:hover {
 .layout {
   display: flex;
   min-height: calc(100vh - 76px);
+  overflow: hidden;
 }
 
 .sidebar {
@@ -471,6 +472,8 @@ a:hover {
   flex: 1;
   padding: var(--space-8);
   background: linear-gradient(135deg, var(--gray-50) 0%, var(--teal-50) 100%);
+  overflow-y: auto;
+  height: calc(100vh - 76px);
 }
 
 /* Grid */
@@ -480,14 +483,20 @@ a:hover {
 }
 
 .grid-2 {
+  display: grid;
+  gap: var(--space-6);
   grid-template-columns: repeat(2, 1fr);
 }
 
 .grid-3 {
+  display: grid;
+  gap: var(--space-6);
   grid-template-columns: repeat(3, 1fr);
 }
 
 .grid-4 {
+  display: grid;
+  gap: var(--space-6);
   grid-template-columns: repeat(4, 1fr);
 }
 
@@ -628,7 +637,8 @@ tr:hover {
   color: #92400e;
 }
 
-.badge-danger {
+.badge-danger,
+.badge-error {
   background: #fee2e2;
   color: #991b1b;
 }
@@ -638,7 +648,8 @@ tr:hover {
   color: #1e40af;
 }
 
-.badge-gray {
+.badge-gray,
+.badge-secondary {
   background: var(--gray-100);
   color: var(--gray-600);
 }

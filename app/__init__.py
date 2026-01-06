@@ -4,7 +4,7 @@ Bariq Al-Yusr Application Factory
 import os
 from flask import Flask, jsonify, send_from_directory
 from app.config import config
-from app.extensions import db, migrate, jwt, cors, limiter
+from app.extensions import db, migrate, jwt, cors, limiter, socketio
 
 
 def create_app(config_name=None):
@@ -30,6 +30,9 @@ def create_app(config_name=None):
     # Register blueprints
     register_blueprints(app)
 
+    # Register WebSocket handlers
+    register_sockets(app)
+
     # Register frontend routes (for serving React build)
     register_frontend_routes(app)
 
@@ -49,6 +52,7 @@ def register_extensions(app):
     jwt.init_app(app)
     cors.init_app(app, resources={r"/api/*": {"origins": "*"}})
     limiter.init_app(app)
+    socketio.init_app(app)
 
     # JWT error handlers
     @jwt.expired_token_loader
@@ -102,10 +106,16 @@ def register_blueprints(app):
     # API routes
     from app.api.v1 import api_v1_bp
     app.register_blueprint(api_v1_bp, url_prefix='/api/v1')
-    
+
     # Frontend routes (HTML pages)
     from app.frontend import frontend_bp
     app.register_blueprint(frontend_bp)
+
+
+def register_sockets(app):
+    """Register WebSocket event handlers"""
+    from app.sockets import register_sockets as register_socket_namespaces
+    register_socket_namespaces(socketio)
 
 
 def register_frontend_routes(app):

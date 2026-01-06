@@ -1,0 +1,233 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}ادارة التجار{% endblock %}
+
+{% block page_content %}
+<div id="merchants-content">
+    <div class="loading-container">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<!-- Merchant Detail Modal -->
+<div id="merchantModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3 id="modalTitle">تفاصيل التاجر</h3>
+            <button onclick="closeModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+    </div>
+</div>
+
+<style>
+.modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-content { background: white; border-radius: 0.75rem; width: 90%; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--gray-200); }
+.modal-header h3 { margin: 0; font-size: 1.125rem; }
+.modal-body { padding: 1.5rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--gray-700); }
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentMerchants = [];
+    let currentPage = 1;
+    let currentFilters = {};
+
+    async function loadMerchants(page = 1, filters = {}) {
+        const container = document.getElementById('merchants-content');
+        currentPage = page;
+        currentFilters = filters;
+
+        try {
+            const params = { page, per_page: 20, ...filters };
+            const result = await API.admin.getMerchants(params);
+
+            if (!result.success) {
+                showError(container, 'حدث خطأ في تحميل التجار');
+                return;
+            }
+
+            currentMerchants = result.data?.data?.merchants || [];
+            const pagination = result.data?.data?.pagination || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">ادارة التجار</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${pagination.total || 0} تاجر</p>
+                    </div>
+                    <button onclick="exportMerchants()" class="btn btn-secondary">📥 تصدير Excel</button>
+                </div>
+
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">بحث</label>
+                            <input type="text" id="searchInput" placeholder="اسم التاجر، السجل التجاري..." class="form-control" value="${filters.search || ''}" onkeyup="if(event.key === 'Enter') applyFilters()">
+                        </div>
+                        <div style="min-width: 150px;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-size: 0.875rem; color: var(--gray-600);">الحالة</label>
+                            <select id="statusFilter" class="form-control" onchange="applyFilters()">
+                                <option value="">الكل</option>
+                                <option value="active" ${filters.status === 'active' ? 'selected' : ''}>نشط</option>
+                                <option value="pending" ${filters.status === 'pending' ? 'selected' : ''}>بانتظار الموافقة</option>
+                                <option value="suspended" ${filters.status === 'suspended' ? 'selected' : ''}>موقوف</option>
+                            </select>
+                        </div>
+                        <button onclick="applyFilters()" class="btn btn-primary">بحث</button>
+                        <button onclick="clearFilters()" class="btn btn-secondary">مسح</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>الاسم</th>
+                                    <th>السجل التجاري</th>
+                                    <th>نوع النشاط</th>
+                                    <th>الفروع</th>
+                                    <th>العمولة</th>
+                                    <th>الحالة</th>
+                                    <th>الاجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentMerchants.map(m => `
+                                    <tr>
+                                        <td><strong>${m.name_ar || m.name_en || '-'}</strong></td>
+                                        <td style="font-family: monospace;">${m.commercial_registration || '-'}</td>
+                                        <td>${m.business_type || '-'}</td>
+                                        <td>${m.branches_count || 0}</td>
+                                        <td>${m.commission_rate || 2.5}%</td>
+                                        <td><span class="badge ${getStatusBadgeClass(m.status)}">${getStatusLabel(m.status)}</span></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem;">
+                                                <button onclick="viewMerchant('${m.id}')" class="btn btn-sm btn-secondary" title="عرض">👁️</button>
+                                                ${m.status === 'pending' ? `
+                                                    <button onclick="approveMerchant('${m.id}')" class="btn btn-sm btn-primary" title="موافقة">✅</button>
+                                                ` : m.status === 'active' ? `
+                                                    <button onclick="suspendMerchant('${m.id}')" class="btn btn-sm" style="background: var(--amber-500); color: white;" title="ايقاف">⏸️</button>
+                                                ` : `
+                                                    <button onclick="activateMerchant('${m.id}')" class="btn btn-sm" style="background: var(--emerald-500); color: white;" title="تفعيل">▶️</button>
+                                                `}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${currentMerchants.length === 0 ? '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا توجد نتائج</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${pagination.pages > 1 ? `
+                        <div style="display: flex; justify-content: center; gap: 0.5rem; padding: 1rem; border-top: 1px solid var(--gray-200);">
+                            ${currentPage > 1 ? `<button onclick="loadMerchants(${currentPage - 1}, currentFilters)" class="btn btn-sm btn-secondary">السابق</button>` : ''}
+                            <span style="padding: 0.5rem 1rem; color: var(--gray-600);">صفحة ${currentPage} من ${pagination.pages}</span>
+                            ${currentPage < pagination.pages ? `<button onclick="loadMerchants(${currentPage + 1}, currentFilters)" class="btn btn-sm btn-secondary">التالي</button>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ');
+        }
+    }
+
+    function applyFilters() {
+        const filters = {
+            search: document.getElementById('searchInput')?.value || '',
+            status: document.getElementById('statusFilter')?.value || ''
+        };
+        Object.keys(filters).forEach(k => !filters[k] && delete filters[k]);
+        loadMerchants(1, filters);
+    }
+
+    function clearFilters() { loadMerchants(1, {}); }
+
+    async function viewMerchant(id) {
+        const modal = document.getElementById('merchantModal');
+        const modalBody = document.getElementById('modalBody');
+        modal.style.display = 'flex';
+        modalBody.innerHTML = '<div class="loading-container"><div class="spinner"></div></div>';
+
+        try {
+            const result = await API.admin.getMerchant(id);
+            const m = result.data?.data || {};
+            document.getElementById('modalTitle').textContent = m.name_ar || 'تفاصيل التاجر';
+
+            modalBody.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الاسم بالعربي</label><div>${m.name_ar || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الاسم بالانجليزي</label><div>${m.name_en || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">السجل التجاري</label><div style="font-family: monospace;">${m.commercial_registration || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">نوع النشاط</label><div>${m.business_type || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">البريد</label><div>${m.email || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الهاتف</label><div dir="ltr">${m.phone || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">نسبة العمولة</label><div>${m.commission_rate || 2.5}%</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">الحالة</label><div><span class="badge ${getStatusBadgeClass(m.status)}">${getStatusLabel(m.status)}</span></div></div>
+                </div>
+                <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                <h4 style="margin-bottom: 1rem;">البيانات البنكية</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">البنك</label><div>${m.bank_name || '-'}</div></div>
+                    <div><label style="color: var(--gray-500); font-size: 0.75rem;">IBAN</label><div style="font-family: monospace;">${m.iban || '-'}</div></div>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: flex-end;">
+                    <button onclick="closeModal()" class="btn btn-secondary">اغلاق</button>
+                </div>
+            `;
+        } catch (error) {
+            modalBody.innerHTML = '<div class="alert alert-error">حدث خطأ</div>';
+        }
+    }
+
+    function closeModal() { document.getElementById('merchantModal').style.display = 'none'; }
+
+    async function approveMerchant(id) {
+        const rate = prompt('ادخل نسبة العمولة (%):', '2.5');
+        if (!rate) return;
+        try {
+            const result = await API.admin.approveMerchant(id, parseFloat(rate));
+            if (result.success) { alert('تمت الموافقة'); loadMerchants(currentPage, currentFilters); }
+            else { alert(result.data?.message || 'حدث خطأ'); }
+        } catch (error) { alert('حدث خطأ'); }
+    }
+
+    async function suspendMerchant(id) {
+        const reason = prompt('سبب الايقاف:');
+        if (!reason) return;
+        try {
+            const result = await API.admin.suspendMerchant(id, reason);
+            if (result.success) { alert('تم الايقاف'); loadMerchants(currentPage, currentFilters); }
+            else { alert(result.data?.message || 'حدث خطأ'); }
+        } catch (error) { alert('حدث خطأ'); }
+    }
+
+    async function activateMerchant(id) {
+        if (!confirm('تفعيل هذا التاجر؟')) return;
+        try {
+            const result = await API.admin.updateMerchant(id, { status: 'active' });
+            if (result.success) { alert('تم التفعيل'); loadMerchants(currentPage, currentFilters); }
+            else { alert(result.data?.message || 'حدث خطأ'); }
+        } catch (error) { alert('حدث خطأ'); }
+    }
+
+    function exportMerchants() {
+        if (currentMerchants.length === 0) { alert('لا توجد بيانات'); return; }
+        const data = currentMerchants.map(m => ({
+            'الاسم': m.name_ar, 'السجل التجاري': m.commercial_registration, 'نوع النشاط': m.business_type,
+            'البريد': m.email, 'الهاتف': m.phone, 'العمولة': m.commission_rate + '%', 'الحالة': getStatusLabel(m.status)
+        }));
+        exportToExcel(data, 'merchants');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => loadMerchants());
+</script>
+{% endblock %}

@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+
+{% block navbar %}
+<nav class="navbar">
+    <div class="container navbar-content">
+        <a href="/panel" class="navbar-brand">
+            <div class="navbar-brand-icon">ب</div>
+            <div>
+                <div>بريق اليسر</div>
+                <div id="role-badge" style="font-size: 0.75rem; color: var(--teal-400); font-weight: normal;">لوحة الادارة</div>
+            </div>
+        </a>
+
+        <div class="navbar-actions" style="display: flex; align-items: center; gap: 1rem;">
+            <div id="user-info" style="text-align: left; font-size: 0.875rem;">
+                <div id="user-name" style="font-weight: 600;"></div>
+                <div id="user-role" style="font-size: 0.75rem; color: var(--teal-400);"></div>
+            </div>
+            <button onclick="logout()" class="btn btn-secondary btn-sm" title="تسجيل الخروج">
+                <svg style="width: 20px; height: 20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1">
+                    </path>
+                </svg>
+            </button>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <ul class="sidebar-nav" id="sidebar-nav">
+            <!-- Dynamic navigation will be loaded here -->
+        </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        {% block page_content %}{% endblock %}
+    </main>
+</div>
+
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-nav" id="mobile-nav">
+    <!-- Dynamic mobile nav will be loaded here -->
+</nav>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Chart.js for visualizations -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- SheetJS for Excel export -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+
+<script>
+    // Role names in Arabic
+    const roleNamesAr = {
+        'super_admin': 'مدير النظام',
+        'accountant': 'المحاسب',
+        'sales': 'المبيعات',
+        'support': 'الدعم الفني',
+        'collections': 'التحصيل'
+    };
+
+    // Navigation items for admin - using /panel routes
+    const navItems = [
+        { url: '/panel', icon: '📊', label: 'الرئيسية', page: 'dashboard' },
+        { url: '/panel/customers', icon: '👥', label: 'العملاء', page: 'customers' },
+        { url: '/panel/merchants', icon: '🏪', label: 'التجار', page: 'merchants' },
+        { url: '/panel/transactions', icon: '📋', label: 'المعاملات', page: 'transactions' },
+        { url: '/panel/payments', icon: '💳', label: 'المدفوعات', page: 'payments' },
+        { url: '/panel/settlements', icon: '💰', label: 'التسويات', page: 'settlements' },
+        { url: '/panel/reports', icon: '📈', label: 'التقارير', page: 'reports' },
+        { url: '/panel/staff', icon: '👤', label: 'الموظفين', page: 'staff' },
+        { url: '/panel/audit-logs', icon: '📝', label: 'سجل العمليات', page: 'audit-logs' },
+        { url: '/panel/settings', icon: '⚙️', label: 'الاعدادات', page: 'settings' },
+    ];
+
+    // Role-based navigation access
+    const roleAccess = {
+        'super_admin': ['dashboard', 'customers', 'merchants', 'transactions', 'payments', 'settlements', 'reports', 'staff', 'audit-logs', 'settings'],
+        'accountant': ['dashboard', 'customers', 'merchants', 'transactions', 'payments', 'settlements', 'reports', 'audit-logs'],
+        'sales': ['dashboard', 'customers', 'merchants', 'transactions', 'reports'],
+        'support': ['dashboard', 'customers', 'merchants', 'transactions', 'payments'],
+        'collections': ['dashboard', 'customers', 'transactions', 'payments', 'reports']
+    };
+
+    // Get current page from URL
+    function getCurrentPage() {
+        const path = window.location.pathname;
+        if (path === '/panel' || path === '/panel/') return 'dashboard';
+        const match = path.match(/\/panel\/([^\/]+)/);
+        return match ? match[1] : 'dashboard';
+    }
+
+    // Build navigation for role
+    function buildNavigation(role) {
+        const allowedPages = roleAccess[role] || roleAccess['support'];
+        const items = navItems.filter(item => allowedPages.includes(item.page));
+        const currentPage = getCurrentPage();
+
+        // Build sidebar
+        const sidebarNav = document.getElementById('sidebar-nav');
+        if (sidebarNav) {
+            sidebarNav.innerHTML = items.map(item => `
+                <li>
+                    <a href="${item.url}" class="${currentPage === item.page ? 'active' : ''}">
+                        <span class="icon">${item.icon}</span>
+                        <span>${item.label}</span>
+                    </a>
+                </li>
+            `).join('');
+        }
+
+        // Build mobile nav (first 5 items)
+        const mobileNav = document.getElementById('mobile-nav');
+        if (mobileNav) {
+            const mobileItems = items.slice(0, 5);
+            mobileNav.innerHTML = mobileItems.map(item => `
+                <a href="${item.url}" class="${currentPage === item.page ? 'active' : ''}">
+                    <span class="icon">${item.icon}</span>
+                    <span>${item.label.split(' ')[0]}</span>
+                </a>
+            `).join('');
+        }
+    }
+
+    // Update user info in navbar
+    function updateUserInfo(user) {
+        const userNameEl = document.getElementById('user-name');
+        const userRoleEl = document.getElementById('user-role');
+        const roleBadgeEl = document.getElementById('role-badge');
+
+        if (userNameEl && user) {
+            userNameEl.textContent = user.full_name || user.email || '';
+        }
+        if (userRoleEl && user) {
+            userRoleEl.textContent = roleNamesAr[user.role] || user.role;
+        }
+        if (roleBadgeEl && user) {
+            roleBadgeEl.textContent = roleNamesAr[user.role] || 'لوحة الادارة';
+        }
+    }
+
+    // Check authentication and build navigation
+    (function() {
+        if (!TokenManager.isAuthenticated() || TokenManager.getUserType() !== 'admin') {
+            // Redirect to admin login
+            window.location.href = '/panel/login';
+            return;
+        }
+        const user = TokenManager.getUser();
+        if (user) {
+            const role = user.role || 'support';
+            buildNavigation(role);
+            updateUserInfo(user);
+        }
+    })();
+
+    // Helper function to check role permissions
+    function hasRole(allowedRoles) {
+        const user = TokenManager.getUser();
+        if (!user) return false;
+        return allowedRoles.includes(user.role);
+    }
+
+    // Check if user is super admin
+    function isSuperAdmin() {
+        return hasRole(['super_admin']);
+    }
+
+    // Check if user can manage financial data
+    function canManageFinance() {
+        return hasRole(['super_admin', 'accountant']);
+    }
+
+    // Check if user can manage staff
+    function canManageStaff() {
+        return hasRole(['super_admin']);
+    }
+
+    // Export to Excel utility
+    function exportToExcel(data, filename) {
+        if (!data || data.length === 0) {
+            alert('لا توجد بيانات للتصدير');
+            return;
+        }
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Data');
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+    }
+
+    // Export to CSV utility
+    function exportToCSV(data, filename) {
+        if (!data || data.length === 0) {
+            alert('لا توجد بيانات للتصدير');
+            return;
+        }
+        const ws = XLSX.utils.json_to_sheet(data);
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${filename}.csv`;
+        link.click();
+    }
+
+    // Format currency
+    function formatCurrency(amount) {
+        return new Intl.NumberFormat('ar-SA', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(amount || 0) + ' ر.س';
+    }
+
+    // Format date
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('ar-SA', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    // Format datetime
+    function formatDateTime(dateStr) {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('ar-SA', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    // Status labels in Arabic
+    function getStatusLabel(status) {
+        const labels = {
+            'active': 'نشط',
+            'pending': 'معلق',
+            'confirmed': 'مؤكد',
+            'paid': 'مدفوع',
+            'overdue': 'متأخر',
+            'cancelled': 'ملغي',
+            'suspended': 'موقوف',
+            'blocked': 'محظور',
+            'completed': 'مكتمل',
+            'failed': 'فاشل',
+            'refunded': 'مسترد',
+            'approved': 'موافق عليها',
+            'transferred': 'محولة',
+            'rejected': 'مرفوضة'
+        };
+        return labels[status] || status || '-';
+    }
+
+    // Badge CSS class based on status
+    function getStatusBadgeClass(status) {
+        const classes = {
+            'active': 'badge-success',
+            'paid': 'badge-success',
+            'completed': 'badge-success',
+            'approved': 'badge-success',
+            'transferred': 'badge-success',
+            'pending': 'badge-warning',
+            'confirmed': 'badge-info',
+            'overdue': 'badge-error',
+            'cancelled': 'badge-error',
+            'suspended': 'badge-warning',
+            'blocked': 'badge-error',
+            'failed': 'badge-error',
+            'rejected': 'badge-error',
+            'refunded': 'badge-info'
+        };
+        return classes[status] || 'badge-secondary';
+    }
+
+    // Show error message
+    function showError(container, message) {
+        container.innerHTML = `
+            <div class="card" style="text-align: center; padding: 3rem;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+                <div style="color: var(--gray-600);">${message}</div>
+                <button onclick="location.reload()" class="btn btn-primary" style="margin-top: 1rem;">
+                    اعادة المحاولة
+                </button>
+            </div>
+        `;
+    }
+</script>
+{{ super() }}
+{% endblock %}

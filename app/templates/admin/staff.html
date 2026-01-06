@@ -1,0 +1,306 @@
+{% extends "admin/layout.html" %}
+
+{% block title %}ادارة الموظفين{% endblock %}
+
+{% block page_content %}
+<div id="staff-content">
+    <div class="loading-container"><div class="spinner"></div></div>
+</div>
+
+<!-- Staff Modal -->
+<div id="staffModal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 id="modalTitle">اضافة موظف</h3>
+            <button onclick="closeModal()" class="btn btn-sm btn-secondary">&times;</button>
+        </div>
+        <div id="modalBody" class="modal-body">
+            <form id="staffForm" onsubmit="saveStaff(event)">
+                <input type="hidden" id="staffId">
+                <div class="form-group">
+                    <label>الاسم الكامل <span style="color: var(--rose-500);">*</span></label>
+                    <input type="text" id="staffName" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>البريد الالكتروني <span style="color: var(--rose-500);">*</span></label>
+                    <input type="email" id="staffEmail" class="form-control" required>
+                </div>
+                <div class="form-group" id="passwordGroup">
+                    <label>كلمة المرور <span style="color: var(--rose-500);">*</span></label>
+                    <input type="password" id="staffPassword" class="form-control" minlength="8">
+                    <small style="color: var(--gray-500);">8 أحرف على الأقل</small>
+                </div>
+                <div class="form-group">
+                    <label>الدور <span style="color: var(--rose-500);">*</span></label>
+                    <select id="staffRole" class="form-control" required>
+                        <option value="">-- اختر الدور --</option>
+                        <option value="super_admin">مدير النظام</option>
+                        <option value="accountant">محاسب</option>
+                        <option value="sales">مبيعات</option>
+                        <option value="support">دعم فني</option>
+                        <option value="collections">تحصيل</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>القسم</label>
+                    <input type="text" id="staffDepartment" class="form-control" placeholder="مثال: المالية">
+                </div>
+                <div class="form-group">
+                    <label>الحالة</label>
+                    <select id="staffStatus" class="form-control">
+                        <option value="active">نشط</option>
+                        <option value="inactive">غير نشط</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" onclick="closeModal()" class="btn btn-secondary">الغاء</button>
+                    <button type="submit" class="btn btn-primary">حفظ</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-content { background: white; border-radius: 0.75rem; width: 90%; max-height: 90vh; overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--gray-200); }
+.modal-header h3 { margin: 0; font-size: 1.125rem; }
+.modal-body { padding: 1.5rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--gray-700); }
+.form-control { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--gray-300); border-radius: 0.375rem; font-size: 0.875rem; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+    let currentStaff = [];
+    let editingStaff = null;
+
+    async function loadStaff() {
+        const container = document.getElementById('staff-content');
+
+        try {
+            const result = await API.admin.getStaff();
+
+            if (!result.success) {
+                showError(container, 'حدث خطأ في تحميل الموظفين');
+                return;
+            }
+
+            currentStaff = result.data?.data?.staff || result.data?.data || [];
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--gray-900); margin-bottom: 0.25rem;">ادارة الموظفين</h1>
+                        <p style="color: var(--gray-500);">اجمالي ${currentStaff.length} موظف</p>
+                    </div>
+                    <button onclick="openAddModal()" class="btn btn-primary">+ اضافة موظف</button>
+                </div>
+
+                <!-- Role Stats -->
+                <div class="grid-4" style="margin-bottom: 1.5rem;">
+                    <div class="stat-card stat-card-teal">
+                        <div class="stat-icon">👤</div>
+                        <div class="stat-label">مديرين</div>
+                        <div class="stat-value">${currentStaff.filter(s => s.role === 'super_admin').length}</div>
+                    </div>
+                    <div class="stat-card stat-card-emerald">
+                        <div class="stat-icon">💼</div>
+                        <div class="stat-label">محاسبين</div>
+                        <div class="stat-value">${currentStaff.filter(s => s.role === 'accountant').length}</div>
+                    </div>
+                    <div class="stat-card stat-card-sky">
+                        <div class="stat-icon">📞</div>
+                        <div class="stat-label">دعم فني</div>
+                        <div class="stat-value">${currentStaff.filter(s => s.role === 'support').length}</div>
+                    </div>
+                    <div class="stat-card stat-card-amber">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-label">تحصيل</div>
+                        <div class="stat-value">${currentStaff.filter(s => s.role === 'collections').length}</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>الاسم</th>
+                                    <th>البريد</th>
+                                    <th>الدور</th>
+                                    <th>القسم</th>
+                                    <th>آخر دخول</th>
+                                    <th>الحالة</th>
+                                    <th>الاجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${currentStaff.map(s => `
+                                    <tr>
+                                        <td><strong>${s.full_name || s.name || '-'}</strong></td>
+                                        <td>${s.email || '-'}</td>
+                                        <td><span class="badge ${getRoleBadgeClass(s.role)}">${getRoleLabel(s.role)}</span></td>
+                                        <td>${s.department || '-'}</td>
+                                        <td>${formatDateTime(s.last_login_at)}</td>
+                                        <td><span class="badge ${s.status === 'active' ? 'badge-success' : 'badge-gray'}">${s.status === 'active' ? 'نشط' : 'غير نشط'}</span></td>
+                                        <td>
+                                            <div style="display: flex; gap: 0.5rem;">
+                                                <button onclick="editStaff('${s.id}')" class="btn btn-sm btn-secondary" title="تعديل">✏️</button>
+                                                ${s.status === 'active' ? `
+                                                    <button onclick="deactivateStaff('${s.id}')" class="btn btn-sm" style="background: var(--amber-500); color: white;" title="تعطيل">⏸️</button>
+                                                ` : `
+                                                    <button onclick="activateStaff('${s.id}')" class="btn btn-sm" style="background: var(--emerald-500); color: white;" title="تفعيل">▶️</button>
+                                                `}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                                ${currentStaff.length === 0 ? '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--gray-500);">لا يوجد موظفين</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            showError(container, 'حدث خطأ');
+        }
+    }
+
+    function openAddModal() {
+        editingStaff = null;
+        document.getElementById('modalTitle').textContent = 'اضافة موظف';
+        document.getElementById('staffForm').reset();
+        document.getElementById('staffId').value = '';
+        document.getElementById('passwordGroup').style.display = 'block';
+        document.getElementById('staffPassword').required = true;
+        document.getElementById('staffModal').style.display = 'flex';
+    }
+
+    function editStaff(id) {
+        const staff = currentStaff.find(s => s.id === id);
+        if (!staff) return;
+
+        editingStaff = staff;
+        document.getElementById('modalTitle').textContent = 'تعديل موظف';
+        document.getElementById('staffId').value = staff.id;
+        document.getElementById('staffName').value = staff.full_name || staff.name || '';
+        document.getElementById('staffEmail').value = staff.email || '';
+        document.getElementById('staffRole').value = staff.role || '';
+        document.getElementById('staffDepartment').value = staff.department || '';
+        document.getElementById('staffStatus').value = staff.status || 'active';
+
+        // Hide password field for edit
+        document.getElementById('passwordGroup').style.display = 'none';
+        document.getElementById('staffPassword').required = false;
+
+        document.getElementById('staffModal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('staffModal').style.display = 'none';
+        editingStaff = null;
+    }
+
+    async function saveStaff(event) {
+        event.preventDefault();
+
+        const id = document.getElementById('staffId').value;
+        const data = {
+            full_name: document.getElementById('staffName').value,
+            email: document.getElementById('staffEmail').value,
+            role: document.getElementById('staffRole').value,
+            department: document.getElementById('staffDepartment').value,
+            status: document.getElementById('staffStatus').value
+        };
+
+        if (!id) {
+            // New staff - include password
+            data.password = document.getElementById('staffPassword').value;
+            if (!data.password || data.password.length < 8) {
+                alert('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+                return;
+            }
+        }
+
+        try {
+            let result;
+            if (id) {
+                result = await API.admin.updateStaff(id, data);
+            } else {
+                result = await API.admin.createStaff(data);
+            }
+
+            if (result.success) {
+                alert(id ? 'تم التحديث بنجاح' : 'تمت الاضافة بنجاح');
+                closeModal();
+                loadStaff();
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ في الحفظ');
+        }
+    }
+
+    async function deactivateStaff(id) {
+        if (!confirm('هل أنت متأكد من تعطيل هذا الموظف؟')) return;
+
+        try {
+            const result = await API.admin.updateStaff(id, { status: 'inactive' });
+            if (result.success) {
+                alert('تم التعطيل');
+                loadStaff();
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ');
+        }
+    }
+
+    async function activateStaff(id) {
+        if (!confirm('هل أنت متأكد من تفعيل هذا الموظف؟')) return;
+
+        try {
+            const result = await API.admin.updateStaff(id, { status: 'active' });
+            if (result.success) {
+                alert('تم التفعيل');
+                loadStaff();
+            } else {
+                alert(result.data?.message || 'حدث خطأ');
+            }
+        } catch (error) {
+            alert('حدث خطأ');
+        }
+    }
+
+    function getRoleLabel(role) {
+        const labels = {
+            'super_admin': 'مدير النظام',
+            'accountant': 'محاسب',
+            'sales': 'مبيعات',
+            'support': 'دعم فني',
+            'collections': 'تحصيل'
+        };
+        return labels[role] || role || '-';
+    }
+
+    function getRoleBadgeClass(role) {
+        const classes = {
+            'super_admin': 'badge-danger',
+            'accountant': 'badge-info',
+            'sales': 'badge-success',
+            'support': 'badge-warning',
+            'collections': 'badge-gray'
+        };
+        return classes[role] || 'badge-gray';
+    }
+
+    document.addEventListener('DOMContentLoaded', loadStaff);
+</script>
+{% endblock %}

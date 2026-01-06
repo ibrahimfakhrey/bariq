@@ -134,3 +134,71 @@ def payment_complete():
         status=status,
         message=message
     )
+
+
+# ==================== Admin Pages (at /panel) ====================
+
+@frontend_bp.route('/panel/login')
+def admin_login():
+    """Admin login page"""
+    return render_template('admin/login.html')
+
+
+@frontend_bp.route('/panel')
+def admin_dashboard():
+    """Admin dashboard"""
+    return render_template('admin/dashboard.html', active_page='dashboard')
+
+
+@frontend_bp.route('/panel/customers')
+def admin_customers():
+    """Admin customers management page"""
+    return render_template('admin/customers.html', active_page='customers')
+
+
+@frontend_bp.route('/panel/merchants')
+def admin_merchants():
+    """Admin merchants management page"""
+    return render_template('admin/merchants.html', active_page='merchants')
+
+
+@frontend_bp.route('/panel/transactions')
+def admin_transactions():
+    """Admin transactions monitoring page"""
+    return render_template('admin/transactions.html', active_page='transactions')
+
+
+@frontend_bp.route('/panel/payments')
+def admin_payments():
+    """Admin payments management page"""
+    return render_template('admin/payments.html', active_page='payments')
+
+
+@frontend_bp.route('/panel/settlements')
+def admin_settlements():
+    """Admin settlements management page"""
+    return render_template('admin/settlements.html', active_page='settlements')
+
+
+@frontend_bp.route('/panel/reports')
+def admin_reports():
+    """Admin reports and analytics page"""
+    return render_template('admin/reports.html', active_page='reports')
+
+
+@frontend_bp.route('/panel/staff')
+def admin_staff():
+    """Admin staff management page"""
+    return render_template('admin/staff.html', active_page='staff')
+
+
+@frontend_bp.route('/panel/audit-logs')
+def admin_audit_logs():
+    """Admin audit logs page"""
+    return render_template('admin/audit-logs.html', active_page='audit-logs')
+
+
+@frontend_bp.route('/panel/settings')
+def admin_settings():
+    """Admin system settings page"""
+    return render_template('admin/settings.html', active_page='settings')

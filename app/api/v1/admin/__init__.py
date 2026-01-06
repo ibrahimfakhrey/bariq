@@ -97,6 +97,38 @@ def update_customer_credit(customer_id):
     return jsonify(result)
 
 
+@admin_bp.route('/customers/<customer_id>/adjust-credit', methods=['POST'])
+@jwt_required()
+def adjust_customer_credit(customer_id):
+    """
+    Adjust customer credit (add or remove)
+
+    Request body:
+    {
+        "amount": 100,        // positive = add, negative = remove
+        "reason": "Promotional bonus",
+        "notes": "Q1 2026 promotion"  // optional
+    }
+    """
+    from app.services.admin_service import AdminService
+
+    identity = current_user
+    data = request.get_json()
+
+    result = AdminService.adjust_customer_credit(
+        customer_id,
+        data.get('amount'),
+        data.get('reason'),
+        data.get('notes'),
+        identity['id']
+    )
+
+    if not result['success']:
+        return jsonify(result), 400
+
+    return jsonify(result)
+
+
 # ==================== Credit Requests ====================
 
 @admin_bp.route('/credit-requests', methods=['GET'])
@@ -459,6 +491,156 @@ def get_audit_logs():
         from_date=from_date,
         page=page
     )
+
+    return jsonify(result)
+
+
+# ==================== Payments & Refunds ====================
+
+@admin_bp.route('/payments', methods=['GET'])
+@jwt_required()
+def get_payments():
+    """List all payments"""
+    from app.models.payment import Payment
+
+    status = request.args.get('status')
+    customer_id = request.args.get('customer_id')
+    from_date = request.args.get('from_date')
+    to_date = request.args.get('to_date')
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    query = Payment.query
+
+    if status:
+        query = query.filter(Payment.status == status)
+    if customer_id:
+        query = query.filter(Payment.customer_id == customer_id)
+
+    query = query.order_by(Payment.created_at.desc())
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'payments': [p.to_dict() for p in pagination.items],
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }
+    })
+
+
+@admin_bp.route('/payments/<payment_id>', methods=['GET'])
+@jwt_required()
+def get_payment(payment_id):
+    """Get payment details"""
+    from app.models.payment import Payment
+    import json
+
+    payment = Payment.query.get(payment_id)
+    if not payment:
+        return jsonify({
+            'success': False,
+            'message': 'Payment not found'
+        }), 404
+
+    data = payment.to_dict()
+    # Include gateway response for admins
+    if payment.gateway_response:
+        try:
+            data['gateway_response'] = json.loads(payment.gateway_response)
+        except:
+            data['gateway_response'] = payment.gateway_response
+
+    return jsonify({
+        'success': True,
+        'data': data
+    })
+
+
+@admin_bp.route('/payments/<payment_id>/refund', methods=['POST'])
+@jwt_required()
+def refund_payment(payment_id):
+    """
+    Refund a payment (partial or full)
+
+    Request body:
+    {
+        "amount": 50.00,       // Optional: amount to refund (defaults to full amount)
+        "reason": "Customer requested refund"  // Optional: reason for refund
+    }
+    """
+    from app.services.paytabs_service import PayTabsService
+    from app.services.audit_service import AuditService
+    from app.models.payment import Payment
+
+    identity = current_user
+    data = request.get_json() or {}
+
+    # Find payment
+    payment = Payment.query.get(payment_id)
+    if not payment:
+        return jsonify({
+            'success': False,
+            'message': 'Payment not found'
+        }), 404
+
+    # Validate payment has gateway reference
+    if not payment.gateway_reference:
+        return jsonify({
+            'success': False,
+            'message': 'Payment does not have a gateway reference (not a PayTabs payment)'
+        }), 400
+
+    # Get refund amount (default to full remaining amount)
+    refund_amount = data.get('amount')
+    if refund_amount is None:
+        refund_amount = float(payment.amount) - float(payment.refunded_amount or 0)
+
+    reason = data.get('reason', 'Admin initiated refund')
+
+    # Process refund via PayTabs
+    result = PayTabsService.refund_payment(
+        tran_ref=payment.gateway_reference,
+        amount=refund_amount,
+        reason=reason
+    )
+
+    # Log the action
+    if result['success']:
+        AuditService.log_action(
+            actor_type='admin',
+            actor_id=identity['id'],
+            action='refund_payment',
+            entity_type='payment',
+            entity_id=payment_id,
+            details={
+                'amount': refund_amount,
+                'reason': reason,
+                'refund_ref': result.get('data', {}).get('refund_ref')
+            }
+        )
+
+    if not result['success']:
+        return jsonify(result), 400
+
+    return jsonify(result)
+
+
+@admin_bp.route('/payments/query/<tran_ref>', methods=['GET'])
+@jwt_required()
+def query_payment_status(tran_ref):
+    """Query payment status from PayTabs gateway"""
+    from app.services.paytabs_service import PayTabsService
+
+    result = PayTabsService.query_payment_status(tran_ref)
+
+    if not result['success']:
+        return jsonify(result), 400
 
     return jsonify(result)
 

@@ -51,7 +51,7 @@ class Config:
     PAYTABS_SERVER_KEY = os.environ.get('PAYTABS_SERVER_KEY', '')
     PAYTABS_CLIENT_KEY = os.environ.get('PAYTABS_CLIENT_KEY', '')
     PAYTABS_CURRENCY = os.environ.get('PAYTABS_CURRENCY', 'SAR')
-    PAYTABS_REGION = os.environ.get('PAYTABS_REGION', 'egypt')  # egypt, saudi, uae, etc.
+    PAYTABS_REGION = os.environ.get('PAYTABS_REGION', 'saudi')  # saudi, egypt, uae, global
     PAYTABS_SANDBOX = os.environ.get('PAYTABS_SANDBOX', 'true').lower() == 'true'
 
     # PayTabs URLs (auto-set based on region)
@@ -59,12 +59,12 @@ class Config:
     def PAYTABS_BASE_URL(self):
         region = self.PAYTABS_REGION.lower()
         region_urls = {
-            'egypt': 'https://secure-egypt.paytabs.com',
             'saudi': 'https://secure.paytabs.sa',
+            'egypt': 'https://secure-egypt.paytabs.com',
             'uae': 'https://secure.paytabs.com',
             'global': 'https://secure-global.paytabs.com'
         }
-        return region_urls.get(region, region_urls['egypt'])
+        return region_urls.get(region, region_urls['saudi'])
 
     # Payment Settings
     PAYMENT_RETURN_URL = os.environ.get('PAYMENT_RETURN_URL', 'http://localhost:5001/payment/complete')

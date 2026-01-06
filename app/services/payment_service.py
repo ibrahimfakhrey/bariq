@@ -8,6 +8,14 @@ from app.models.payment import Payment
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.notification import Notification
+from app.utils.realtime import (
+    emit_to_customer,
+    emit_to_merchant,
+    emit_to_branch,
+    build_payment_event_data,
+    build_transaction_event_data,
+    build_credit_event_data
+)
 
 
 class PaymentService:
@@ -196,6 +204,12 @@ class PaymentService:
             # Send notification
             PaymentService._notify_payment_received(customer, transaction, payment)
 
+            # Emit real-time events
+            emit_to_customer(customer.id, 'payment_completed', build_payment_event_data(payment))
+            emit_to_customer(customer.id, 'credit_updated', build_credit_event_data(customer))
+            emit_to_merchant(transaction.merchant_id, 'payment_received', build_payment_event_data(payment))
+            emit_to_branch(transaction.branch_id, 'payment_received', build_payment_event_data(payment))
+
             return {
                 'success': True,
                 'message': 'Payment processed successfully',
@@ -332,6 +346,22 @@ class PaymentService:
 
             db.session.commit()
 
+            # Emit real-time events
+            emit_to_customer(customer.id, 'payment_completed', {
+                'total_amount': total_amount,
+                'transaction_count': len(payments_made),
+                'payments': payments_made
+            })
+            emit_to_customer(customer.id, 'credit_updated', build_credit_event_data(customer))
+
+            # Notify merchants for each transaction
+            for txn in transactions:
+                emit_to_merchant(txn.merchant_id, 'payment_received', {
+                    'transaction_id': txn.id,
+                    'reference_number': txn.reference_number,
+                    'customer_id': customer.id
+                })
+
             return {
                 'success': True,
                 'message': 'Payment processed successfully',
@@ -447,6 +477,23 @@ class PaymentService:
             customer.updated_at = datetime.utcnow()
 
             db.session.commit()
+
+            # Emit real-time events
+            emit_to_customer(customer.id, 'payment_completed', {
+                'total_amount': total_amount,
+                'transaction_count': len(payments_made),
+                'payments': payments_made
+            })
+            emit_to_customer(customer.id, 'credit_updated', build_credit_event_data(customer))
+
+            # Notify merchants for each transaction
+            for txn in outstanding:
+                if any(p['transaction_id'] == txn.id for p in payments_made):
+                    emit_to_merchant(txn.merchant_id, 'payment_received', {
+                        'transaction_id': txn.id,
+                        'reference_number': txn.reference_number,
+                        'customer_id': customer.id
+                    })
 
             return {
                 'success': True,

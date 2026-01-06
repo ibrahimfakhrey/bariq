@@ -11,6 +11,22 @@ from app.models.merchant import Merchant
 from app.models.branch import Branch
 from app.models.merchant_user import MerchantUser
 from app.models.notification import Notification
+from app.utils.role_access import (
+    get_merchant_user,
+    filter_transactions_by_role,
+    filter_by_accessible_branches,
+    validate_branch_access,
+    AccessDeniedError
+)
+from app.utils.realtime import (
+    emit_to_customer,
+    emit_to_merchant,
+    emit_to_branch,
+    emit_to_transaction,
+    emit_to_admins,
+    build_transaction_event_data,
+    build_credit_event_data
+)
 
 
 class TransactionService:
@@ -154,6 +170,9 @@ class TransactionService:
 
             # Send notification to customer
             TransactionService._notify_customer_new_transaction(customer, transaction, merchant, branch)
+
+            # Emit real-time event to customer
+            emit_to_customer(customer.id, 'transaction_created', build_transaction_event_data(transaction))
 
             return {
                 'success': True,
@@ -310,6 +329,10 @@ class TransactionService:
             # Notify merchant about rejection
             TransactionService._notify_merchant_rejected(transaction, reason)
 
+            # Emit real-time event to merchant
+            emit_to_merchant(transaction.merchant_id, 'transaction_rejected', build_transaction_event_data(transaction))
+            emit_to_branch(transaction.branch_id, 'transaction_rejected', build_transaction_event_data(transaction))
+
             return {
                 'success': True,
                 'message': 'Transaction rejected successfully',
@@ -379,6 +402,11 @@ class TransactionService:
 
             db.session.commit()
 
+            # Emit real-time events
+            emit_to_merchant(transaction.merchant_id, 'transaction_confirmed', build_transaction_event_data(transaction))
+            emit_to_branch(transaction.branch_id, 'transaction_confirmed', build_transaction_event_data(transaction))
+            emit_to_customer(customer.id, 'credit_updated', build_credit_event_data(customer))
+
             return {
                 'success': True,
                 'message': 'Transaction confirmed successfully',
@@ -401,8 +429,8 @@ class TransactionService:
     # ==================== Merchant Transaction Views ====================
 
     @staticmethod
-    def get_merchant_transactions(merchant_id, branch_id=None, status=None, from_date=None, to_date=None, page=1, per_page=20):
-        """Get merchant's transactions"""
+    def get_merchant_transactions(merchant_id, staff_id=None, branch_id=None, status=None, from_date=None, to_date=None, page=1, per_page=20):
+        """Get merchant's transactions with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -414,7 +442,33 @@ class TransactionService:
 
         query = Transaction.query.filter_by(merchant_id=merchant_id)
 
-        if branch_id:
+        # Apply role-based filtering if staff_id is provided
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Apply role-based filtering
+                query = filter_transactions_by_role(
+                    query, user,
+                    Transaction.branch_id,
+                    Transaction.cashier_id
+                )
+
+                # If branch_id is specified, validate access
+                if branch_id:
+                    if not validate_branch_access(user, branch_id):
+                        return {
+                            'success': False,
+                            'message': 'Access denied to this branch',
+                            'error_code': 'AUTH_003'
+                        }
+                    query = query.filter_by(branch_id=branch_id)
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+        elif branch_id:
             query = query.filter_by(branch_id=branch_id)
 
         if status:
@@ -462,8 +516,8 @@ class TransactionService:
         }
 
     @staticmethod
-    def get_transaction_for_merchant(merchant_id, transaction_id):
-        """Get single transaction details for merchant"""
+    def get_transaction_for_merchant(merchant_id, transaction_id, staff_id=None):
+        """Get single transaction details for merchant with role-based access"""
         transaction = Transaction.query.filter_by(
             id=transaction_id,
             merchant_id=merchant_id
@@ -475,6 +529,31 @@ class TransactionService:
                 'message': 'Transaction not found',
                 'error_code': 'TXN_001'
             }
+
+        # Role-based access validation
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers can only view their own transactions
+                if user.role == 'cashier' and transaction.cashier_id != user.id:
+                    return {
+                        'success': False,
+                        'message': 'Access denied to this transaction',
+                        'error_code': 'AUTH_003'
+                    }
+                # Other roles need branch access
+                elif user.role != 'cashier' and not validate_branch_access(user, transaction.branch_id):
+                    return {
+                        'success': False,
+                        'message': 'Access denied to this transaction',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
 
         txn_dict = transaction.to_dict()
         txn_dict['customer'] = {
@@ -501,8 +580,8 @@ class TransactionService:
     # ==================== Cancel Transaction ====================
 
     @staticmethod
-    def cancel_transaction(merchant_id, transaction_id, reason, cancelled_by=None):
-        """Cancel a pending transaction (before customer confirms)"""
+    def cancel_transaction(merchant_id, transaction_id, reason, cancelled_by=None, staff_id=None):
+        """Cancel a pending transaction (before customer confirms) with role-based access"""
         transaction = Transaction.query.filter_by(
             id=transaction_id,
             merchant_id=merchant_id
@@ -514,6 +593,31 @@ class TransactionService:
                 'message': 'Transaction not found',
                 'error_code': 'TXN_001'
             }
+
+        # Role-based access validation
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers can only cancel their own transactions
+                if user.role == 'cashier' and transaction.cashier_id != user.id:
+                    return {
+                        'success': False,
+                        'message': 'Access denied: You can only cancel your own transactions',
+                        'error_code': 'AUTH_003'
+                    }
+                # Other roles need branch access
+                elif user.role != 'cashier' and not validate_branch_access(user, transaction.branch_id):
+                    return {
+                        'success': False,
+                        'message': 'Access denied to this transaction',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
 
         if transaction.status != 'pending':
             return {
@@ -531,6 +635,9 @@ class TransactionService:
 
             # Notify customer
             TransactionService._notify_customer_cancelled(transaction.customer, transaction, reason)
+
+            # Emit real-time event to customer
+            emit_to_customer(transaction.customer_id, 'transaction_cancelled', build_transaction_event_data(transaction))
 
             return {
                 'success': True,
@@ -550,8 +657,8 @@ class TransactionService:
     # ==================== Process Return ====================
 
     @staticmethod
-    def process_return(merchant_id, transaction_id, return_amount, reason, reason_details=None, returned_items=None, processed_by=None):
-        """Process a return for a transaction"""
+    def process_return(merchant_id, transaction_id, return_amount, reason, reason_details=None, returned_items=None, processed_by=None, staff_id=None):
+        """Process a return for a transaction with role-based access"""
         transaction = Transaction.query.filter_by(
             id=transaction_id,
             merchant_id=merchant_id
@@ -563,6 +670,31 @@ class TransactionService:
                 'message': 'Transaction not found',
                 'error_code': 'TXN_001'
             }
+
+        # Role-based access validation
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers cannot process returns (only higher roles)
+                if user.role == 'cashier':
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to process returns',
+                        'error_code': 'AUTH_003'
+                    }
+                # Other roles need branch access
+                if not validate_branch_access(user, transaction.branch_id):
+                    return {
+                        'success': False,
+                        'message': 'Access denied to this transaction',
+                        'error_code': 'AUTH_003'
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
 
         if transaction.status not in ['confirmed', 'overdue']:
             return {
@@ -624,6 +756,10 @@ class TransactionService:
             # Notify customer
             TransactionService._notify_customer_return(customer, transaction, return_amount)
 
+            # Emit real-time events
+            emit_to_customer(customer.id, 'transaction_return', build_transaction_event_data(transaction))
+            emit_to_customer(customer.id, 'credit_updated', build_credit_event_data(customer))
+
             return {
                 'success': True,
                 'message': 'Return processed successfully',
@@ -645,8 +781,8 @@ class TransactionService:
             }
 
     @staticmethod
-    def get_merchant_returns(merchant_id, branch_id=None, from_date=None, to_date=None, page=1, per_page=20):
-        """Get merchant's returns"""
+    def get_merchant_returns(merchant_id, staff_id=None, branch_id=None, from_date=None, to_date=None, page=1, per_page=20):
+        """Get merchant's returns with role-based filtering"""
         merchant = Merchant.query.get(merchant_id)
 
         if not merchant:
@@ -660,7 +796,45 @@ class TransactionService:
             Transaction.merchant_id == merchant_id
         )
 
-        if branch_id:
+        # Apply role-based filtering if staff_id is provided
+        if staff_id:
+            user = get_merchant_user(staff_id)
+            if user:
+                # Cashiers cannot view returns
+                if user.role == 'cashier':
+                    return {
+                        'success': False,
+                        'message': 'Cashiers are not authorized to view returns',
+                        'error_code': 'AUTH_003'
+                    }
+                # Apply branch filtering for non-top-level roles
+                if not user.can_see_all_branches():
+                    accessible_branch_ids = user.get_accessible_branch_ids()
+                    if accessible_branch_ids:
+                        query = query.filter(Transaction.branch_id.in_(accessible_branch_ids))
+                    else:
+                        return {
+                            'success': True,
+                            'data': {'returns': []},
+                            'meta': {'page': page, 'per_page': per_page, 'total': 0, 'total_pages': 0}
+                        }
+
+                # If branch_id is specified, validate access
+                if branch_id:
+                    if not validate_branch_access(user, branch_id):
+                        return {
+                            'success': False,
+                            'message': 'Access denied to this branch',
+                            'error_code': 'AUTH_003'
+                        }
+                    query = query.filter(Transaction.branch_id == branch_id)
+            else:
+                return {
+                    'success': False,
+                    'message': 'Staff member not found',
+                    'error_code': 'MERCH_006'
+                }
+        elif branch_id:
             query = query.filter(Transaction.branch_id == branch_id)
 
         if from_date:
@@ -712,16 +886,30 @@ class TransactionService:
         ).all()
 
         count = 0
+        overdue_list = []
         for txn in overdue_transactions:
             txn.status = 'overdue'
             txn.updated_at = datetime.utcnow()
             count += 1
+            overdue_list.append(txn)
 
             # Notify customer
             TransactionService._notify_customer_overdue(txn.customer, txn)
 
         try:
             db.session.commit()
+
+            # Emit real-time events after successful commit
+            for txn in overdue_list:
+                emit_to_customer(txn.customer_id, 'transaction_overdue', build_transaction_event_data(txn))
+
+            # Notify admins about overdue transactions
+            if count > 0:
+                emit_to_admins('overdue_alert', {
+                    'count': count,
+                    'message': f'{count} transactions marked as overdue'
+                })
+
             return {
                 'success': True,
                 'message': f'{count} transactions marked as overdue'
